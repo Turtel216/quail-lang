@@ -1,9 +1,7 @@
 #pragma once
 #include <memory>
+#include <string>
 #include <vector>
-
-namespace ff {
-namespace ast {
 
 class Ast {
 public:
@@ -38,7 +36,7 @@ public:
   virtual ~Definition() = default;
 };
 
-enum class binop { PLUS, MINUS, TIMES, DIVIDE };
+enum binop { PLUS, MINUS, TIMES, DIVIDE };
 
 class AstInt : public Ast {
 public:
@@ -55,6 +53,7 @@ public:
 };
 
 class AstUid : public Ast {
+public:
   std::string id;
 
   explicit AstUid(std::string i) : id(std::move(i)) {}
@@ -118,6 +117,7 @@ public:
 };
 
 class DefinitionData : public Definition {
+public:
   std::string name;
   std::vector<std::unique_ptr<Constructor>> constructors;
 
@@ -125,5 +125,3 @@ class DefinitionData : public Definition {
                  std::vector<std::unique_ptr<Constructor>> _constructors)
       : name(std::move(_name)), constructors(std::move(_constructors)) {}
 };
-} // namespace ast
-} // namespace ff
