@@ -2,6 +2,9 @@
 #include <memory>
 #include <vector>
 
+namespace ff {
+namespace ast {
+
 class Ast {
 public:
   virtual ~Ast() = default;
@@ -122,3 +125,5 @@ class DefinitionData : public Definition {
                  std::vector<std::unique_ptr<Constructor>> _constructors)
       : name(std::move(_name)), constructors(std::move(_constructors)) {}
 };
+} // namespace ast
+} // namespace ff
