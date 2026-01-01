@@ -32,6 +32,7 @@ extern yy::parser::symbol_type yylex();
 %language "c++"
 %define api.value.type variant
 %define api.token.constructor
+%define parse.error verbose
 
 %type <std::vector<std::string>> lowercaseParams uppercaseParams
 %type <std::vector<std::unique_ptr<Definition>>> program definitions
