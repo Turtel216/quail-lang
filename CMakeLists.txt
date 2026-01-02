@@ -63,6 +63,7 @@ target_compile_options(parser PRIVATE
 # Source files
 set(SRC_FILES
     src/main.cpp
+    src/types.cpp
 )
 
 # Main executable

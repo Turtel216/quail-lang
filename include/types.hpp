@@ -31,27 +31,27 @@ public:
 
 class TypeArr : public Type {
 public:
-  std::unique_ptr<Type> left;
-  std::unique_ptr<Type> right;
+  std::shared_ptr<Type> left;
+  std::shared_ptr<Type> right;
 
-  TypeArr(std::unique_ptr<Type> l, std::unique_ptr<Type> r)
+  TypeArr(std::shared_ptr<Type> l, std::shared_ptr<Type> r)
       : left(std::move(l)), right(std::move(r)) {}
 };
 
-class TypeMgr {
+class TypeManager {
 private:
   int lastId = 0;
 
 public:
-  std::map<std::string, std::unique_ptr<Type>> types;
+  std::map<std::string, std::shared_ptr<Type>> types;
 
-  std::string new_type_name();
-  std::unique_ptr<Type> new_type();
-  std::unique_ptr<Type> new_arrow_type();
+  std::string newTypeName() noexcept;
+  std::shared_ptr<Type> newType() noexcept;
+  std::shared_ptr<Type> newArrowType() noexcept;
 
-  void unify(std::unique_ptr<Type> l, std::unique_ptr<Type> r);
-  std::unique_ptr<Type> resolve(std::unique_ptr<Type> t, TypeVar *&var);
-  void bind(const std::string &s, std::unique_ptr<Type> t);
+  void unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r);
+  std::shared_ptr<Type> resolve(std::shared_ptr<Type> t, TypeVar *&var);
+  void bind(const std::string &s, std::shared_ptr<Type> t);
 
   int getLastId() const noexcept { return this->lastId; }
 };
