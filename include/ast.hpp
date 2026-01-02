@@ -1,4 +1,6 @@
 #pragma once
+#include "../include/enviroment.hpp"
+#include "../include/types.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -6,11 +8,17 @@
 class Ast {
 public:
   virtual ~Ast() = default;
+  virtual std::shared_ptr<ff::sem::Type>
+  typecheck(ff::sem::TypeManager &mgr, const ff::sem::TypeEnv &env) const = 0;
 };
 
 class Pattern {
 public:
   virtual ~Pattern() = default;
+
+  virtual void match(std::shared_ptr<ff::sem::Type> t,
+                     ff::sem::TypeManager &mgr,
+                     ff::sem::TypeEnv &env) const = 0;
 };
 
 class Branch {
@@ -43,6 +51,9 @@ public:
   int value;
 
   explicit AstInt(int v) : value(v) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
+                                           const ff::sem::TypeEnv &env) const;
 };
 
 class AstLid : public Ast {
@@ -50,6 +61,9 @@ public:
   std::string id;
 
   explicit AstLid(std::string i) : id(std::move(i)) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
+                                           const ff::sem::TypeEnv &env) const;
 };
 
 class AstUid : public Ast {
@@ -57,6 +71,9 @@ public:
   std::string id;
 
   explicit AstUid(std::string i) : id(std::move(i)) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
+                                           const ff::sem::TypeEnv &env) const;
 };
 
 class AstBinop : public Ast {
@@ -67,6 +84,9 @@ public:
 
   AstBinop(binop _op, std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs)
       : op(_op), left(std::move(lhs)), right(std::move(rhs)) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
+                                           const ff::sem::TypeEnv &env) const;
 };
 
 class AstApp : public Ast {
@@ -76,6 +96,9 @@ public:
 
   AstApp(std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs)
       : left(std::move(lhs)), right(std::move(rhs)) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
+                                           const ff::sem::TypeEnv &env) const;
 };
 
 class AstCase : public Ast {
@@ -86,6 +109,9 @@ public:
   AstCase(std::unique_ptr<Ast> _of,
           std::vector<std::unique_ptr<Branch>> _branches)
       : of(std::move(_of)), branches(std::move(_branches)) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
+                                           const ff::sem::TypeEnv &env) const;
 };
 
 class PatternVar : public Pattern {
@@ -93,6 +119,9 @@ public:
   std::string var;
 
   PatternVar(std::string _var) : var(std::move(_var)) {}
+
+  void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
+             ff::sem::TypeEnv &env) const;
 };
 
 class PatternConstr : public Pattern {
@@ -102,6 +131,9 @@ public:
 
   PatternConstr(std::string c, std::vector<std::string> p)
       : constr(std::move(c)), params(std::move(p)) {}
+
+  void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
+             ff::sem::TypeEnv &env) const;
 };
 
 class DefinitionDefn : public Definition {

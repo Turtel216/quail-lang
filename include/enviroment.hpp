@@ -7,6 +7,7 @@ namespace ff {
 namespace sem {
 
 class TypeEnv {
+public:
   std::map<std::string, std::shared_ptr<Type>> names;
   TypeEnv const *parent = nullptr; // link to next node
 
