@@ -42,6 +42,11 @@ public:
 class Definition {
 public:
   virtual ~Definition() = default;
+
+  virtual void typeCheckFirst(ff::sem::TypeManager &mgr,
+                              ff::sem::TypeEnv &env) = 0;
+  virtual void typeCheckSecond(ff::sem::TypeManager &mgr,
+                               const ff::sem::TypeEnv &env) const = 0;
 };
 
 enum binop { PLUS, MINUS, TIMES, DIVIDE };
@@ -52,8 +57,9 @@ public:
 
   explicit AstInt(int v) : value(v) {}
 
-  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
-                                           const ff::sem::TypeEnv &env) const;
+  std::shared_ptr<ff::sem::Type>
+  typecheck(ff::sem::TypeManager &mgr,
+            const ff::sem::TypeEnv &env) const override;
 };
 
 class AstLid : public Ast {
@@ -62,8 +68,9 @@ public:
 
   explicit AstLid(std::string i) : id(std::move(i)) {}
 
-  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
-                                           const ff::sem::TypeEnv &env) const;
+  std::shared_ptr<ff::sem::Type>
+  typecheck(ff::sem::TypeManager &mgr,
+            const ff::sem::TypeEnv &env) const override;
 };
 
 class AstUid : public Ast {
@@ -72,8 +79,9 @@ public:
 
   explicit AstUid(std::string i) : id(std::move(i)) {}
 
-  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
-                                           const ff::sem::TypeEnv &env) const;
+  std::shared_ptr<ff::sem::Type>
+  typecheck(ff::sem::TypeManager &mgr,
+            const ff::sem::TypeEnv &env) const override;
 };
 
 class AstBinop : public Ast {
@@ -85,8 +93,9 @@ public:
   AstBinop(binop _op, std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs)
       : op(_op), left(std::move(lhs)), right(std::move(rhs)) {}
 
-  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
-                                           const ff::sem::TypeEnv &env) const;
+  std::shared_ptr<ff::sem::Type>
+  typecheck(ff::sem::TypeManager &mgr,
+            const ff::sem::TypeEnv &env) const override;
 };
 
 class AstApp : public Ast {
@@ -97,8 +106,9 @@ public:
   AstApp(std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs)
       : left(std::move(lhs)), right(std::move(rhs)) {}
 
-  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
-                                           const ff::sem::TypeEnv &env) const;
+  std::shared_ptr<ff::sem::Type>
+  typecheck(ff::sem::TypeManager &mgr,
+            const ff::sem::TypeEnv &env) const override;
 };
 
 class AstCase : public Ast {
@@ -110,8 +120,9 @@ public:
           std::vector<std::unique_ptr<Branch>> _branches)
       : of(std::move(_of)), branches(std::move(_branches)) {}
 
-  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr,
-                                           const ff::sem::TypeEnv &env) const;
+  std::shared_ptr<ff::sem::Type>
+  typecheck(ff::sem::TypeManager &mgr,
+            const ff::sem::TypeEnv &env) const override;
 };
 
 class PatternVar : public Pattern {
@@ -121,7 +132,7 @@ public:
   PatternVar(std::string _var) : var(std::move(_var)) {}
 
   void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
-             ff::sem::TypeEnv &env) const;
+             ff::sem::TypeEnv &env) const override;
 };
 
 class PatternConstr : public Pattern {
@@ -133,7 +144,7 @@ public:
       : constr(std::move(c)), params(std::move(p)) {}
 
   void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
-             ff::sem::TypeEnv &env) const;
+             ff::sem::TypeEnv &env) const override;
 };
 
 class DefinitionDefn : public Definition {
@@ -142,10 +153,19 @@ public:
   std::vector<std::string> params;
   std::unique_ptr<Ast> body;
 
+  // Types
+  std::shared_ptr<ff::sem::Type> returnType;
+  std::vector<std::shared_ptr<ff::sem::Type>> paramTypes;
+
   DefinitionDefn(std::string _name, std::vector<std::string> _params,
                  std::unique_ptr<Ast> _body)
       : name(std::move(_name)), params(std::move(_params)),
         body(std::move(_body)) {}
+
+  void typeCheckFirst(ff::sem::TypeManager &mgr,
+                      ff::sem::TypeEnv &env) override;
+  void typeCheckSecond(ff::sem::TypeManager &mgr,
+                       const ff::sem::TypeEnv &env) const override;
 };
 
 class DefinitionData : public Definition {
@@ -156,4 +176,9 @@ public:
   DefinitionData(std::string _name,
                  std::vector<std::unique_ptr<Constructor>> _constructors)
       : name(std::move(_name)), constructors(std::move(_constructors)) {}
+
+  void typeCheckFirst(ff::sem::TypeManager &mgr,
+                      ff::sem::TypeEnv &env) override;
+  void typeCheckSecond(ff::sem::TypeManager &mgr,
+                       const ff::sem::TypeEnv &env) const override;
 };

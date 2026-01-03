@@ -111,3 +111,60 @@ void PatternConstr::match(std::shared_ptr<ff::sem::Type> t,
   if (!result_type)
     throw 0;
 }
+
+// ############ Definitions ############
+
+void DefinitionDefn::typeCheckFirst(ff::sem::TypeManager &mgr,
+                                    ff::sem::TypeEnv &env) {
+  this->returnType = mgr.newType();
+  std::shared_ptr<ff::sem::Type> fullType = this->returnType;
+
+  for (auto it = this->params.rbegin(); it != this->params.rend(); it++) {
+    std::shared_ptr<ff::sem::Type> paramType = mgr.newType();
+    fullType = std::shared_ptr<ff::sem::Type>(
+        new ff::sem::TypeArr(paramType, fullType));
+    this->paramTypes.push_back(paramType);
+  }
+
+  env.bind(name, fullType);
+}
+
+void DefinitionDefn::typeCheckSecond(ff::sem::TypeManager &mgr,
+                                     const ff::sem::TypeEnv &env) const {
+  ff::sem::TypeEnv newEnv = env.scope();
+  auto param_it = this->params.begin();
+  auto type_it = this->paramTypes.rbegin();
+
+  while (param_it != params.end() && type_it != this->paramTypes.rend()) {
+    newEnv.bind(*param_it, *type_it);
+    param_it++;
+    type_it++;
+  }
+
+  std::shared_ptr<ff::sem::Type> body_type = body->typecheck(mgr, newEnv);
+  mgr.unify(this->returnType, body_type);
+}
+
+void DefinitionData::typeCheckFirst(ff::sem::TypeManager &mgr,
+                                    ff::sem::TypeEnv &env) {
+  std::shared_ptr<ff::sem::Type> return_type =
+      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase(name));
+
+  for (auto &constructor : constructors) {
+    std::shared_ptr<ff::sem::Type> full_type = return_type;
+
+    for (auto &type_name : constructor->types) {
+      std::shared_ptr<ff::sem::Type> type =
+          std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase(type_name));
+      full_type =
+          std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(type, full_type));
+    }
+
+    env.bind(constructor->name, full_type);
+  }
+}
+
+void DefinitionData::typeCheckSecond(ff::sem::TypeManager &mgr,
+                                     const ff::sem::TypeEnv &env) const {
+  // TODO ?
+}
