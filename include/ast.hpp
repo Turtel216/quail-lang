@@ -8,9 +8,12 @@
 class Ast {
 public:
   virtual ~Ast() = default;
+
   virtual std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const = 0;
+
+  virtual void print(int indent, std::ostream &to) const = 0;
 };
 
 class Pattern {
@@ -20,6 +23,8 @@ public:
   virtual void match(std::shared_ptr<ff::sem::Type> t,
                      ff::sem::TypeManager &mgr,
                      ff::sem::TypeContext &env) const = 0;
+
+  virtual void print(std::ostream &to) const = 0;
 };
 
 class Branch {
@@ -61,6 +66,8 @@ public:
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
+
+  void print(int indent, std::ostream &to) const override;
 };
 
 class AstLid : public Ast {
@@ -72,6 +79,8 @@ public:
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
+
+  void print(int indent, std::ostream &to) const override;
 };
 
 class AstUid : public Ast {
@@ -83,6 +92,8 @@ public:
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
+
+  void print(int indent, std::ostream &to) const override;
 };
 
 class AstBinop : public Ast {
@@ -97,6 +108,8 @@ public:
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
+
+  void print(int indent, std::ostream &to) const override;
 };
 
 class AstApp : public Ast {
@@ -110,6 +123,8 @@ public:
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
+
+  void print(int indent, std::ostream &to) const override;
 };
 
 class AstCase : public Ast {
@@ -124,6 +139,8 @@ public:
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
+
+  void print(int indent, std::ostream &to) const override;
 };
 
 class PatternVar : public Pattern {
@@ -134,6 +151,8 @@ public:
 
   void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
              ff::sem::TypeContext &env) const override;
+
+  void print(std::ostream &to) const override;
 };
 
 class PatternConstr : public Pattern {
@@ -146,6 +165,8 @@ public:
 
   void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
              ff::sem::TypeContext &env) const override;
+
+  void print(std::ostream &to) const override;
 };
 
 class DefinitionDefn : public Definition {

@@ -6,9 +6,14 @@
 namespace ff {
 namespace sem {
 
+class TypeManager;
+
 class Type {
 public:
   virtual ~Type() = default;
+
+  virtual void print(const TypeManager &mgr, std::ostream &to) const = 0;
+  ;
 };
 
 class TypeVar : public Type {
@@ -18,6 +23,8 @@ private:
 public:
   TypeVar(std::string n) : name(std::move(n)) {}
   std::string getName() const noexcept { return this->name; }
+
+  void print(const TypeManager &mgr, std::ostream &to) const override;
 };
 
 class TypeBase : public Type {
@@ -26,7 +33,10 @@ private:
 
 public:
   TypeBase(std::string n) : name(std::move(n)) {}
+
   std::string getName() const noexcept { return this->name; }
+
+  void print(const TypeManager &mgr, std::ostream &to) const override;
 };
 
 class TypeArr : public Type {
@@ -36,6 +46,8 @@ public:
 
   TypeArr(std::shared_ptr<Type> l, std::shared_ptr<Type> r)
       : left(std::move(l)), right(std::move(r)) {}
+
+  void print(const TypeManager &mgr, std::ostream &to) const override;
 };
 
 class TypeManager {

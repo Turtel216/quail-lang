@@ -66,6 +66,7 @@ set(SRC_FILES
     src/types.cpp
     src/context.cpp
     src/ast.cpp
+    src/error.cpp
 )
 
 # Main executable

@@ -1,4 +1,5 @@
 #include "../include/types.hpp"
+#include "error.hpp"
 #include <algorithm>
 #include <memory>
 
@@ -72,7 +73,7 @@ void TypeManager::unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r) {
       return;
   }
 
-  throw 0;
+  throw ff::UnificationError(l, r);
 }
 
 void TypeManager::bind(const std::string &s, std::shared_ptr<Type> t) {
@@ -82,5 +83,26 @@ void TypeManager::bind(const std::string &s, std::shared_ptr<Type> t) {
     return;
   types[s] = t;
 }
+
+void TypeVar::print(const TypeManager &mgr, std::ostream &to) const {
+  auto it = mgr.types.find(name);
+  if (it != mgr.types.end()) {
+    it->second->print(mgr, to);
+  } else {
+    to << name;
+  }
+}
+
+void TypeBase::print(const TypeManager &mgr, std::ostream &to) const {
+  to << name;
+}
+
+void TypeArr::print(const TypeManager &mgr, std::ostream &to) const {
+  left->print(mgr, to);
+  to << " -> (";
+  right->print(mgr, to);
+  to << ")";
+}
+
 } // namespace sem
 } // namespace ff

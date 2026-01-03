@@ -1,4 +1,5 @@
 #include "../include/ast.hpp"
+#include "../include/error.hpp"
 #include "../include/types.hpp"
 #include "parser.hpp"
 
@@ -8,10 +9,8 @@ void yy::parser::error(const std::string &msg) {
 
 extern std::vector<std::unique_ptr<Definition>> program;
 
-void typecheck_program(const std::vector<std::unique_ptr<Definition>> &prog) {
-  ff::sem::TypeManager mgr;
-  ff::sem::TypeContext env;
-
+void typecheck_program(const std::vector<std::unique_ptr<Definition>> &prog,
+                       ff::sem::TypeManager &mgr, ff::sem::TypeContext &env) {
   std::shared_ptr<ff::sem::Type> int_type =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
   std::shared_ptr<ff::sem::Type> binop_type =
@@ -31,11 +30,46 @@ void typecheck_program(const std::vector<std::unique_ptr<Definition>> &prog) {
   for (auto &def : prog) {
     def->typeCheckSecond(mgr, env);
   }
+
+  for (auto &pair : env.names) {
+    std::cout << pair.first << ": ";
+    pair.second->print(mgr, std::cout);
+    std::cout << std::endl;
+  }
 }
 
 int main() {
   yy::parser parser;
+  ff::sem::TypeManager mgr;
+  ff::sem::TypeContext env;
+
   parser.parse();
-  typecheck_program(program);
-  std::cout << program.size() << std::endl;
+  for (auto &definition : program) {
+    DefinitionDefn *def = dynamic_cast<DefinitionDefn *>(definition.get());
+    if (!def)
+      continue;
+
+    std::cout << def->name;
+    for (auto &param : def->params)
+      std::cout << " " << param;
+    std::cout << ":" << std::endl;
+
+    def->body->print(1, std::cout);
+  }
+  try {
+    typecheck_program(program, mgr, env);
+  } catch (ff::UnificationError &err) {
+    std::cout << "failed to unify types: " << std::endl;
+    std::cout << "  (1) \033[34m";
+    err.left->print(mgr, std::cout);
+
+    std::cout << "\033[0m" << std::endl;
+    std::cout << "  (2) \033[32m";
+    err.right->print(mgr, std::cout);
+
+    std::cout << "\033[0m" << std::endl;
+  } catch (ff::TypeError &err) {
+    std::cout << "failed to type check program: " << err.description
+              << std::endl;
+  }
 }
