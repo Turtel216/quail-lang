@@ -6,17 +6,17 @@
 namespace ff {
 namespace sem {
 
-class TypeEnv {
+class TypeContext {
 public:
   std::map<std::string, std::shared_ptr<Type>> names;
-  TypeEnv const *parent = nullptr; // link to next node
+  TypeContext const *parent = nullptr; // link to next node
 
-  TypeEnv(TypeEnv const *p) : parent(p) {}
-  TypeEnv() : TypeEnv(nullptr) {}
+  TypeContext(TypeContext const *p) : parent(p) {}
+  TypeContext() : TypeContext(nullptr) {}
 
   std::shared_ptr<Type> lookup(const std::string &name) const;
   void bind(const std::string &name, std::shared_ptr<Type> t);
-  TypeEnv scope() const;
+  TypeContext scope() const;
 };
 
 } // namespace sem

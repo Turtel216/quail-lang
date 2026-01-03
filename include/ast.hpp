@@ -1,5 +1,5 @@
 #pragma once
-#include "../include/enviroment.hpp"
+#include "../include/context.hpp"
 #include "../include/types.hpp"
 #include <memory>
 #include <string>
@@ -9,7 +9,8 @@ class Ast {
 public:
   virtual ~Ast() = default;
   virtual std::shared_ptr<ff::sem::Type>
-  typecheck(ff::sem::TypeManager &mgr, const ff::sem::TypeEnv &env) const = 0;
+  typecheck(ff::sem::TypeManager &mgr,
+            const ff::sem::TypeContext &env) const = 0;
 };
 
 class Pattern {
@@ -18,7 +19,7 @@ public:
 
   virtual void match(std::shared_ptr<ff::sem::Type> t,
                      ff::sem::TypeManager &mgr,
-                     ff::sem::TypeEnv &env) const = 0;
+                     ff::sem::TypeContext &env) const = 0;
 };
 
 class Branch {
@@ -44,9 +45,9 @@ public:
   virtual ~Definition() = default;
 
   virtual void typeCheckFirst(ff::sem::TypeManager &mgr,
-                              ff::sem::TypeEnv &env) = 0;
+                              ff::sem::TypeContext &env) = 0;
   virtual void typeCheckSecond(ff::sem::TypeManager &mgr,
-                               const ff::sem::TypeEnv &env) const = 0;
+                               const ff::sem::TypeContext &env) const = 0;
 };
 
 enum binop { PLUS, MINUS, TIMES, DIVIDE };
@@ -59,7 +60,7 @@ public:
 
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeEnv &env) const override;
+            const ff::sem::TypeContext &env) const override;
 };
 
 class AstLid : public Ast {
@@ -70,7 +71,7 @@ public:
 
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeEnv &env) const override;
+            const ff::sem::TypeContext &env) const override;
 };
 
 class AstUid : public Ast {
@@ -81,7 +82,7 @@ public:
 
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeEnv &env) const override;
+            const ff::sem::TypeContext &env) const override;
 };
 
 class AstBinop : public Ast {
@@ -95,7 +96,7 @@ public:
 
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeEnv &env) const override;
+            const ff::sem::TypeContext &env) const override;
 };
 
 class AstApp : public Ast {
@@ -108,7 +109,7 @@ public:
 
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeEnv &env) const override;
+            const ff::sem::TypeContext &env) const override;
 };
 
 class AstCase : public Ast {
@@ -122,7 +123,7 @@ public:
 
   std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeEnv &env) const override;
+            const ff::sem::TypeContext &env) const override;
 };
 
 class PatternVar : public Pattern {
@@ -132,7 +133,7 @@ public:
   PatternVar(std::string _var) : var(std::move(_var)) {}
 
   void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
-             ff::sem::TypeEnv &env) const override;
+             ff::sem::TypeContext &env) const override;
 };
 
 class PatternConstr : public Pattern {
@@ -144,7 +145,7 @@ public:
       : constr(std::move(c)), params(std::move(p)) {}
 
   void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
-             ff::sem::TypeEnv &env) const override;
+             ff::sem::TypeContext &env) const override;
 };
 
 class DefinitionDefn : public Definition {
@@ -163,9 +164,9 @@ public:
         body(std::move(_body)) {}
 
   void typeCheckFirst(ff::sem::TypeManager &mgr,
-                      ff::sem::TypeEnv &env) override;
+                      ff::sem::TypeContext &env) override;
   void typeCheckSecond(ff::sem::TypeManager &mgr,
-                       const ff::sem::TypeEnv &env) const override;
+                       const ff::sem::TypeContext &env) const override;
 };
 
 class DefinitionData : public Definition {
@@ -178,7 +179,7 @@ public:
       : name(std::move(_name)), constructors(std::move(_constructors)) {}
 
   void typeCheckFirst(ff::sem::TypeManager &mgr,
-                      ff::sem::TypeEnv &env) override;
+                      ff::sem::TypeContext &env) override;
   void typeCheckSecond(ff::sem::TypeManager &mgr,
-                       const ff::sem::TypeEnv &env) const override;
+                       const ff::sem::TypeContext &env) const override;
 };

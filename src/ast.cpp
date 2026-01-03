@@ -16,27 +16,29 @@ std::string opName(binop op) {
   throw 0;
 }
 
+// ############ Asts ############
+
 std::shared_ptr<ff::sem::Type>
 AstInt::typecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeEnv &env) const {
+                  const ff::sem::TypeContext &env) const {
   return std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
 }
 
 std::shared_ptr<ff::sem::Type>
 AstLid::typecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeEnv &env) const {
+                  const ff::sem::TypeContext &env) const {
   return env.lookup(id);
 }
 
 std::shared_ptr<ff::sem::Type>
 AstUid::typecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeEnv &env) const {
+                  const ff::sem::TypeContext &env) const {
   return env.lookup(id);
 }
 
 std::shared_ptr<ff::sem::Type>
 AstBinop::typecheck(ff::sem::TypeManager &mgr,
-                    const ff::sem::TypeEnv &env) const {
+                    const ff::sem::TypeContext &env) const {
   std::shared_ptr<ff::sem::Type> ltype = left->typecheck(mgr, env);
   std::shared_ptr<ff::sem::Type> rtype = right->typecheck(mgr, env);
   std::shared_ptr<ff::sem::Type> ftype = env.lookup(opName(op));
@@ -55,7 +57,7 @@ AstBinop::typecheck(ff::sem::TypeManager &mgr,
 
 std::shared_ptr<ff::sem::Type>
 AstApp::typecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeEnv &env) const {
+                  const ff::sem::TypeContext &env) const {
   std::shared_ptr<ff::sem::Type> ltype = left->typecheck(mgr, env);
   std::shared_ptr<ff::sem::Type> rtype = right->typecheck(mgr, env);
 
@@ -68,12 +70,12 @@ AstApp::typecheck(ff::sem::TypeManager &mgr,
 
 std::shared_ptr<ff::sem::Type>
 AstCase::typecheck(ff::sem::TypeManager &mgr,
-                   const ff::sem::TypeEnv &env) const {
+                   const ff::sem::TypeContext &env) const {
   std::shared_ptr<ff::sem::Type> case_type = of->typecheck(mgr, env);
   std::shared_ptr<ff::sem::Type> branch_type = mgr.newType();
 
   for (auto &branch : branches) {
-    ff::sem::TypeEnv new_env = env.scope();
+    ff::sem::TypeContext new_env = env.scope();
     branch->pattern->match(case_type, mgr, new_env);
     std::shared_ptr<ff::sem::Type> curr_branch_type =
         branch->expr->typecheck(mgr, new_env);
@@ -84,13 +86,14 @@ AstCase::typecheck(ff::sem::TypeManager &mgr,
 }
 
 void PatternVar::match(std::shared_ptr<ff::sem::Type> t,
-                       ff::sem::TypeManager &mgr, ff::sem::TypeEnv &env) const {
+                       ff::sem::TypeManager &mgr,
+                       ff::sem::TypeContext &env) const {
   env.bind(var, t);
 }
 
 void PatternConstr::match(std::shared_ptr<ff::sem::Type> t,
                           ff::sem::TypeManager &mgr,
-                          ff::sem::TypeEnv &env) const {
+                          ff::sem::TypeContext &env) const {
   std::shared_ptr<ff::sem::Type> constructor_type = env.lookup(constr);
   if (!constructor_type)
     throw 0;
@@ -115,7 +118,7 @@ void PatternConstr::match(std::shared_ptr<ff::sem::Type> t,
 // ############ Definitions ############
 
 void DefinitionDefn::typeCheckFirst(ff::sem::TypeManager &mgr,
-                                    ff::sem::TypeEnv &env) {
+                                    ff::sem::TypeContext &env) {
   this->returnType = mgr.newType();
   std::shared_ptr<ff::sem::Type> fullType = this->returnType;
 
@@ -130,8 +133,8 @@ void DefinitionDefn::typeCheckFirst(ff::sem::TypeManager &mgr,
 }
 
 void DefinitionDefn::typeCheckSecond(ff::sem::TypeManager &mgr,
-                                     const ff::sem::TypeEnv &env) const {
-  ff::sem::TypeEnv newEnv = env.scope();
+                                     const ff::sem::TypeContext &env) const {
+  ff::sem::TypeContext newEnv = env.scope();
   auto param_it = this->params.begin();
   auto type_it = this->paramTypes.rbegin();
 
@@ -146,7 +149,7 @@ void DefinitionDefn::typeCheckSecond(ff::sem::TypeManager &mgr,
 }
 
 void DefinitionData::typeCheckFirst(ff::sem::TypeManager &mgr,
-                                    ff::sem::TypeEnv &env) {
+                                    ff::sem::TypeContext &env) {
   std::shared_ptr<ff::sem::Type> return_type =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase(name));
 
@@ -165,6 +168,6 @@ void DefinitionData::typeCheckFirst(ff::sem::TypeManager &mgr,
 }
 
 void DefinitionData::typeCheckSecond(ff::sem::TypeManager &mgr,
-                                     const ff::sem::TypeEnv &env) const {
+                                     const ff::sem::TypeContext &env) const {
   // TODO ?
 }

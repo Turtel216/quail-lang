@@ -64,7 +64,7 @@ target_compile_options(parser PRIVATE
 set(SRC_FILES
     src/main.cpp
     src/types.cpp
-    src/enviroment.cpp
+    src/context.cpp
     src/ast.cpp
 )
 

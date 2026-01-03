@@ -1,8 +1,8 @@
-#include "../include/enviroment.hpp"
+#include "../include/context.hpp"
 
 namespace ff {
 namespace sem {
-std::shared_ptr<Type> TypeEnv::lookup(const std::string &name) const {
+std::shared_ptr<Type> TypeContext::lookup(const std::string &name) const {
   auto it = this->names.find(name);
   if (it != this->names.end())
     return it->second;
@@ -13,10 +13,10 @@ std::shared_ptr<Type> TypeEnv::lookup(const std::string &name) const {
   return nullptr;
 }
 
-void TypeEnv::bind(const std::string &name, std::shared_ptr<Type> t) {
+void TypeContext::bind(const std::string &name, std::shared_ptr<Type> t) {
   this->names[name] = t;
 }
 
-TypeEnv TypeEnv::scope() const { return TypeEnv(this); }
+TypeContext TypeContext::scope() const { return TypeContext(this); }
 } // namespace sem
 } // namespace ff

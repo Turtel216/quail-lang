@@ -10,7 +10,7 @@ extern std::vector<std::unique_ptr<Definition>> program;
 
 void typecheck_program(const std::vector<std::unique_ptr<Definition>> &prog) {
   ff::sem::TypeManager mgr;
-  ff::sem::TypeEnv env;
+  ff::sem::TypeContext env;
 
   std::shared_ptr<ff::sem::Type> int_type =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
