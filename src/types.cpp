@@ -85,16 +85,16 @@ void TypeManager::bind(const std::string &s, std::shared_ptr<Type> t) {
 }
 
 void TypeVar::print(const TypeManager &mgr, std::ostream &to) const {
-  auto it = mgr.types.find(name);
+  auto it = mgr.types.find(this->name);
   if (it != mgr.types.end()) {
     it->second->print(mgr, to);
   } else {
-    to << name;
+    to << this->name;
   }
 }
 
 void TypeBase::print(const TypeManager &mgr, std::ostream &to) const {
-  to << name;
+  to << this->name;
 }
 
 void TypeArr::print(const TypeManager &mgr, std::ostream &to) const {

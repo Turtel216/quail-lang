@@ -29,17 +29,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${GENERATED_DIR})
 
+FLEX_TARGET(
+    Lexer
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/scanner.l
+    ${GENERATED_DIR}/scanner.cpp
+)
+
 BISON_TARGET(
     Parser
     ${CMAKE_CURRENT_SOURCE_DIR}/src/parser.y
     ${GENERATED_DIR}/parser.cpp
     DEFINES_FILE ${GENERATED_DIR}/parser.hpp
-)
-
-FLEX_TARGET(
-    Lexer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/scanner.l
-    ${GENERATED_DIR}/scanner.cpp
 )
 
 ADD_FLEX_BISON_DEPENDENCY(Lexer Parser)
