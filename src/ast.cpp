@@ -15,12 +15,6 @@ void printIndent(int n, std::ostream &to) {
 // ############ Asts ############
 
 std::shared_ptr<ff::sem::Type>
-AstInt::typecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeContext &env) const {
-  return std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
-}
-
-std::shared_ptr<ff::sem::Type>
 Ast::commonTypecheck(ff::sem::TypeManager &mgr,
                      const ff::sem::TypeContext &context) {
   this->nodeType = this->typecheck(mgr, context);
@@ -36,6 +30,20 @@ void Ast::commonResolve(const ff::sem::TypeManager &mgr) {
 
   this->resolve(mgr);
   this->nodeType = std::move(resolvedType);
+}
+
+void AstInt::resolve(const ff::sem::TypeManager &mgr) const {
+  // TODO
+}
+
+std::shared_ptr<ff::sem::Type>
+AstInt::typecheck(ff::sem::TypeManager &mgr,
+                  const ff::sem::TypeContext &env) const {
+  return std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
+}
+
+void AstLid::resolve(const ff::sem::TypeManager &mgr) const {
+  // TODO
 }
 
 void AstInt::generate(
@@ -74,6 +82,10 @@ std::shared_ptr<ff::sem::Type>
 AstUid::typecheck(ff::sem::TypeManager &mgr,
                   const ff::sem::TypeContext &env) const {
   return env.lookup(id);
+}
+
+void AstUid::resolve(const ff::sem::TypeManager &mgr) const {
+  // TODO
 }
 
 void AstUid::generate(
@@ -146,6 +158,11 @@ AstApp::typecheck(ff::sem::TypeManager &mgr,
   return return_type;
 }
 
+void AstApp::resolve(const ff::sem::TypeManager &mgr) const {
+  left->commonResolve(mgr);
+  right->commonResolve(mgr);
+}
+
 void AstApp::generate(
     const std::shared_ptr<ff::ir::Enviroment> &env,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
@@ -160,6 +177,13 @@ void AstApp::print(int indent, std::ostream &to) const {
   to << "APP:" << std::endl;
   left->print(indent + 1, to);
   right->print(indent + 1, to);
+}
+
+void AstCase::resolve(const ff::sem::TypeManager &mgr) const {
+  of->commonResolve(mgr);
+  for (auto &branch : branches) {
+    branch->expr->commonResolve(mgr);
+  }
 }
 
 std::shared_ptr<ff::sem::Type>
@@ -186,6 +210,70 @@ AstCase::typecheck(ff::sem::TypeManager &mgr,
   }
 
   return branch_type;
+}
+
+void AstCase::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  ff::sem::TypeData *type =
+      dynamic_cast<ff::sem::TypeData *>(of->nodeType.get());
+
+  of->generate(env, into);
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
+
+  ff::ir::Jump *jump_instruction = new ff::ir::Jump();
+
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(jump_instruction));
+
+  for (auto &branch : branches) {
+    std::vector<std::unique_ptr<ff::ir::Instruction>> branch_instructions;
+    PatternVar *vpat;
+    PatternConstr *cpat;
+
+    if ((vpat = dynamic_cast<PatternVar *>(branch->pattern.get()))) {
+      branch->expr->generate(std::shared_ptr<ff::ir::Enviroment>(
+                                 new ff::ir::EnviromentOffset(1, env)),
+                             branch_instructions);
+
+      for (auto &constr_pair : type->constructors) {
+        if (jump_instruction->tagMappings.find(constr_pair.second.tag) !=
+            jump_instruction->tagMappings.end())
+          break;
+
+        jump_instruction->tagMappings[constr_pair.second.tag] =
+            jump_instruction->branches.size();
+      }
+      jump_instruction->branches.push_back(std::move(branch_instructions));
+    } else if ((cpat = dynamic_cast<PatternConstr *>(branch->pattern.get()))) {
+      std::shared_ptr<ff::ir::Enviroment> new_env = env;
+
+      for (auto it = cpat->params.rbegin(); it != cpat->params.rend(); it++) {
+        new_env = std::shared_ptr<ff::ir::Enviroment>(
+            new ff::ir::EnviromentVar(*it, new_env));
+      }
+
+      branch_instructions.push_back(
+          std::unique_ptr<ff::ir::Instruction>(new ff::ir::Split()));
+      branch->expr->generate(new_env, branch_instructions);
+      branch_instructions.push_back(std::unique_ptr<ff::ir::Instruction>(
+          new ff::ir::Slide(cpat->params.size())));
+
+      int new_tag = type->constructors[cpat->constr].tag;
+      if (jump_instruction->tagMappings.find(new_tag) !=
+          jump_instruction->tagMappings.end())
+        throw ff::TypeError("technically not a type error: duplicate pattern");
+
+      jump_instruction->tagMappings[new_tag] =
+          jump_instruction->branches.size();
+      jump_instruction->branches.push_back(std::move(branch_instructions));
+    }
+  }
+
+  for (auto &constr_pair : type->constructors) {
+    if (jump_instruction->tagMappings.find(constr_pair.second.tag) ==
+        jump_instruction->tagMappings.end())
+      throw ff::TypeError("non-total pattern");
+  }
 }
 
 void AstCase::print(int indent, std::ostream &to) const {
@@ -270,7 +358,7 @@ void DefinitionDefn::typeCheckSecond(ff::sem::TypeManager &mgr,
 
 void DefinitionData::typeCheckFirst(ff::sem::TypeManager &mgr,
                                     ff::sem::TypeContext &env) {
-  ff::sem::TypeData *this_type = new TypeData(name);
+  ff::sem::TypeData *this_type = new ff::sem::TypeData(name);
   std::shared_ptr<ff::sem::Type> return_type =
       std::shared_ptr<ff::sem::Type>(this_type);
   int next_tag;

@@ -100,11 +100,10 @@ public:
 
 // TODO: Determine private variable accesors and mutators
 class Jump : public Instruction {
-private:
+public:
   std::vector<std::vector<std::unique_ptr<Instruction>>> branches;
   std::map<int, int> tagMappings;
 
-public:
   void print(int indent, std::ostream &to) const override;
 };
 

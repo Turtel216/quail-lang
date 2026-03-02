@@ -41,8 +41,10 @@ public:
 
 class TypeData : public TypeBase {
 public:
-  int tag;
-  std::map<std::string, int> constructors;
+  struct constructor {
+    int tag;
+  };
+  std::map<std::string, constructor> constructors;
 
   TypeData(std::string name) : TypeBase(std::move(name)) {}
 };
