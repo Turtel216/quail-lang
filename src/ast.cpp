@@ -123,6 +123,15 @@ AstApp::typecheck(ff::sem::TypeManager &mgr,
   return return_type;
 }
 
+void AstApp::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  this->right->generate(env, into);
+  this->left->generate(std::shared_ptr<ff::ir::EnviromentOffset>(
+                           new ff::ir::EnviromentOffset(1, env)),
+                       into);
+}
+
 void AstApp::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
   to << "APP:" << std::endl;
