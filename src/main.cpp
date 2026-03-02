@@ -1,6 +1,7 @@
 #include "../include/ast.hpp"
 #include "../include/error.hpp"
 #include "../include/types.hpp"
+#include "instructions.hpp"
 #include "parser.hpp"
 
 void yy::parser::error(const std::string &msg) {

@@ -1,6 +1,7 @@
 #include "../include/instructions.hpp"
 #include <ostream>
 
+namespace ff {
 namespace ir {
 
 static void print_indent(int n, std::ostream &to) {
@@ -86,3 +87,4 @@ void Unwind::print(int indent, std::ostream &to) const {
   to << "Unwind()" << std::endl;
 }
 } // namespace ir
+} // namespace ff

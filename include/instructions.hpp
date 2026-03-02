@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+namespace ff {
 namespace ir {
 class Instruction {
 
@@ -145,5 +146,5 @@ public:
 class Unwind : public Instruction {
   void print(int indent, std::ostream &to) const override;
 };
-
 } // namespace ir
+} // namespace ff
