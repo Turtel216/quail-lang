@@ -3,6 +3,8 @@
 #include "../include/binop.hpp"
 #include "../include/context.hpp"
 #include "../include/types.hpp"
+#include "enviroment.hpp"
+#include "instructions.hpp"
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,6 +17,9 @@ public:
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const = 0;
 
+  virtual void
+  generate(const std::shared_ptr<ff::ir::Enviroment> &env,
+           std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const = 0;
   virtual void print(int indent, std::ostream &to) const = 0;
 };
 
@@ -67,6 +72,9 @@ public:
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
 
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -80,6 +88,9 @@ public:
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
 
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -93,6 +104,9 @@ public:
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
 
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -109,6 +123,9 @@ public:
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
 
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -124,6 +141,9 @@ public:
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
 
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -140,6 +160,9 @@ public:
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
 
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
   void print(int indent, std::ostream &to) const override;
 };
 

@@ -1,8 +1,11 @@
 #include "../include/ast.hpp"
 
 #include "ast.hpp"
+#include "enviroment.hpp"
 #include "error.hpp"
+#include "instructions.hpp"
 #include <iostream>
+#include <memory>
 
 void printIndent(int n, std::ostream &to) {
   while (n--)
@@ -17,6 +20,13 @@ AstInt::typecheck(ff::sem::TypeManager &mgr,
   return std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
 }
 
+void AstInt::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  into.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::PushInt(this->value)));
+}
+
 void AstInt::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
   to << "INT: " << value << std::endl;
@@ -28,6 +38,15 @@ AstLid::typecheck(ff::sem::TypeManager &mgr,
   return env.lookup(id);
 }
 
+void AstLid::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(
+      env->hasVariable(id)
+          ? (ff::ir::Instruction *)new ff::ir::Push(env->getOffset(id))
+          : (ff::ir::Instruction *)new ff::ir::PushGlobal(id)));
+}
+
 void AstLid::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
   to << "INT: " << id << std::endl;
@@ -37,6 +56,13 @@ std::shared_ptr<ff::sem::Type>
 AstUid::typecheck(ff::sem::TypeManager &mgr,
                   const ff::sem::TypeContext &env) const {
   return env.lookup(id);
+}
+
+void AstUid::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  into.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::PushGlobal(this->id)));
 }
 
 void AstUid::print(int indent, std::ostream &to) const {
@@ -61,6 +87,20 @@ AstBinop::typecheck(ff::sem::TypeManager &mgr,
 
   mgr.unify(arrow_two, ftype);
   return return_type;
+}
+
+void AstBinop::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  this->right->generate(env, into);
+  this->left->generate(
+      std::shared_ptr<ff::ir::Enviroment>(new ff::ir::EnviromentOffset(1, env)),
+      into);
+
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(
+      new ff::ir::PushGlobal(opAction(op))));
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
 }
 
 void AstBinop::print(int indent, std::ostream &to) const {
