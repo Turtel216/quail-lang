@@ -20,6 +20,24 @@ AstInt::typecheck(ff::sem::TypeManager &mgr,
   return std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
 }
 
+std::shared_ptr<ff::sem::Type>
+Ast::commonTypecheck(ff::sem::TypeManager &mgr,
+                     const ff::sem::TypeContext &context) {
+  this->nodeType = this->typecheck(mgr, context);
+  return this->nodeType;
+}
+
+void Ast::commonResolve(const ff::sem::TypeManager &mgr) {
+  ff::sem::TypeVar *var;
+  auto resolvedType = mgr.resolve(this->nodeType, var);
+
+  if (var)
+    throw ff::TypeError("ambiguous typed program");
+
+  this->resolve(mgr);
+  this->nodeType = std::move(resolvedType);
+}
+
 void AstInt::generate(
     const std::shared_ptr<ff::ir::Enviroment> &env,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
@@ -87,6 +105,11 @@ AstBinop::typecheck(ff::sem::TypeManager &mgr,
 
   mgr.unify(arrow_two, ftype);
   return return_type;
+}
+
+void AstBinop::resolve(const ff::sem::TypeManager &mgr) const {
+  left->commonResolve(mgr);
+  right->commonResolve(mgr);
 }
 
 void AstBinop::generate(
@@ -247,10 +270,15 @@ void DefinitionDefn::typeCheckSecond(ff::sem::TypeManager &mgr,
 
 void DefinitionData::typeCheckFirst(ff::sem::TypeManager &mgr,
                                     ff::sem::TypeContext &env) {
+  ff::sem::TypeData *this_type = new TypeData(name);
   std::shared_ptr<ff::sem::Type> return_type =
-      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase(name));
+      std::shared_ptr<ff::sem::Type>(this_type);
+  int next_tag;
 
   for (auto &constructor : constructors) {
+    constructor->tag = next_tag;
+    this_type->constructors[constructor->name] = {next_tag++};
+
     std::shared_ptr<ff::sem::Type> full_type = return_type;
 
     for (auto it = constructor->types.rbegin(); it != constructor->types.rend();
@@ -263,6 +291,27 @@ void DefinitionData::typeCheckFirst(ff::sem::TypeManager &mgr,
 
     env.bind(constructor->name, full_type);
   }
+}
+
+void DefinitionDefn::resolve(const ff::sem::TypeManager &mgr) {
+  ff::sem::TypeVar *var;
+  body->resolve(mgr);
+
+  this->returnType = mgr.resolve(this->returnType, var);
+
+  if (var)
+    throw ff::TypeError("ambiguously typed program");
+
+  for (auto &paramType : this->paramTypes) {
+    paramType = mgr.resolve(paramType, var);
+
+    if (var)
+      throw ff::TypeError("ambiguously typed program");
+  }
+}
+
+void DefinitionData::resolve(const ff::sem::TypeManager &mgr) {
+  // TODO
 }
 
 void DefinitionData::typeCheckSecond(ff::sem::TypeManager &mgr,

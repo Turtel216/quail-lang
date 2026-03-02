@@ -11,8 +11,16 @@
 
 class Ast {
 public:
+  std::shared_ptr<ff::sem::Type> nodeType;
+
   virtual ~Ast() = default;
 
+  void commonResolve(const ff::sem::TypeManager &mgr);
+  virtual void resolve(const ff::sem::TypeManager &mgr) const = 0;
+
+  std::shared_ptr<ff::sem::Type>
+  commonTypecheck(ff::sem::TypeManager &mgr,
+                  const ff::sem::TypeContext &context);
   virtual std::shared_ptr<ff::sem::Type>
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const = 0;
@@ -20,6 +28,7 @@ public:
   virtual void
   generate(const std::shared_ptr<ff::ir::Enviroment> &env,
            std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const = 0;
+
   virtual void print(int indent, std::ostream &to) const = 0;
 };
 
@@ -47,6 +56,7 @@ class Constructor {
 public:
   std::string name;
   std::vector<std::string> types;
+  int tag;
 
   Constructor(std::string _name, std::vector<std::string> _types)
       : name(std::move(_name)), types(std::move(_types)) {}
@@ -60,6 +70,8 @@ public:
                               ff::sem::TypeContext &env) = 0;
   virtual void typeCheckSecond(ff::sem::TypeManager &mgr,
                                const ff::sem::TypeContext &env) const = 0;
+
+  virtual void resolve(const ff::sem::TypeManager &mgr) = 0;
 };
 
 class AstInt : public Ast {
@@ -123,9 +135,12 @@ public:
   typecheck(ff::sem::TypeManager &mgr,
             const ff::sem::TypeContext &env) const override;
 
+  void resolve(const ff::sem::TypeManager &mgr) const override;
+
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -211,6 +226,8 @@ public:
                       ff::sem::TypeContext &env) override;
   void typeCheckSecond(ff::sem::TypeManager &mgr,
                        const ff::sem::TypeContext &env) const override;
+
+  void resolve(const ff::sem::TypeManager &mgr) override;
 };
 
 class DefinitionData : public Definition {
@@ -226,4 +243,6 @@ public:
                       ff::sem::TypeContext &env) override;
   void typeCheckSecond(ff::sem::TypeManager &mgr,
                        const ff::sem::TypeContext &env) const override;
+
+  void resolve(const ff::sem::TypeManager &mgr) override;
 };

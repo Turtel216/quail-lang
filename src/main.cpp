@@ -37,6 +37,10 @@ void typecheck_program(const std::vector<std::unique_ptr<Definition>> &prog,
     pair.second->print(mgr, std::cout);
     std::cout << std::endl;
   }
+
+  for (auto &def : prog) {
+    def->resolve(mgr);
+  }
 }
 
 int main() {

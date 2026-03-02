@@ -39,6 +39,14 @@ public:
   void print(const TypeManager &mgr, std::ostream &to) const override;
 };
 
+class TypeData : public TypeBase {
+public:
+  int tag;
+  std::map<std::string, int> constructors;
+
+  TypeData(std::string name) : TypeBase(std::move(name)) {}
+};
+
 class TypeArr : public Type {
 public:
   std::shared_ptr<Type> left;
@@ -62,7 +70,7 @@ public:
   std::shared_ptr<Type> newArrowType() noexcept;
 
   void unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r);
-  std::shared_ptr<Type> resolve(std::shared_ptr<Type> t, TypeVar *&var);
+  std::shared_ptr<Type> resolve(std::shared_ptr<Type> t, TypeVar *&var) const;
   void bind(const std::string &s, std::shared_ptr<Type> t);
 
   int getLastId() const noexcept { return this->lastId; }

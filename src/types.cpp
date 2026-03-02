@@ -28,7 +28,7 @@ std::shared_ptr<Type> TypeManager::newArrowType() noexcept {
 }
 
 std::shared_ptr<Type> TypeManager::resolve(std::shared_ptr<Type> t,
-                                           TypeVar *&var) {
+                                           TypeVar *&var) const {
   TypeVar *cast;
 
   var = nullptr;
