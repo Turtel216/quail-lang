@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../include/binop.hp"
 #include "../include/context.hpp"
 #include "../include/types.hpp"
 #include <memory>
@@ -55,8 +56,6 @@ public:
   virtual void typeCheckSecond(ff::sem::TypeManager &mgr,
                                const ff::sem::TypeContext &env) const = 0;
 };
-
-enum binop { PLUS, MINUS, TIMES, DIVIDE };
 
 class AstInt : public Ast {
 public:
