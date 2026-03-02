@@ -4,20 +4,6 @@
 #include "error.hpp"
 #include <iostream>
 
-std::string opName(binop op) {
-  switch (op) {
-  case PLUS:
-    return "+";
-  case MINUS:
-    return "-";
-  case TIMES:
-    return "*";
-  case DIVIDE:
-    return "/";
-  }
-  throw 0;
-}
-
 void printIndent(int n, std::ostream &to) {
   while (n--)
     to << "  ";

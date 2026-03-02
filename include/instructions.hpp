@@ -1,6 +1,8 @@
+
 #pragma once
 
-#include "binop.h"
+#include "binop.hpp"
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <ostream>
@@ -51,13 +53,13 @@ public:
 
 class Pop : public Instruction {
 private:
-  int count;
+  std::size_t count;
 
 public:
-  Pop(int _count) noexcept : count(_count) {}
+  Pop(std::size_t _count) noexcept : count(_count) {}
 
   void print(int indent, std::ostream &to) const override;
-  int getCount() const noexcept { return this->count; }
+  std::size_t getCount() const noexcept { return this->count; }
 };
 
 // Apply a function at the top of the stack to a value after it.
@@ -80,14 +82,14 @@ public:
 class Pack : public Instruction {
 private:
   int tag;
-  int size;
+  std::size_t size;
 
 public:
-  Pack(int _tag, int _size) noexcept : tag(_tag), size(_size) {}
+  Pack(int _tag, std::size_t _size) noexcept : tag(_tag), size(_size) {}
 
   void print(int indent, std::ostream &to) const override;
   int getTag() const noexcept { return this->tag; }
-  int getSize() const noexcept { return this->size; }
+  std::size_t getSize() const noexcept { return this->size; }
 };
 
 class Split : public Instruction {
@@ -131,13 +133,17 @@ public:
 
 class Alloc : public Instruction {
 private:
-  int amount;
+  std::size_t amount;
 
 public:
-  Alloc(int _amount) noexcept : amount(_amount) {}
+  Alloc(std::size_t _amount) noexcept : amount(_amount) {}
 
   void print(int indent, std::ostream &to) const override;
-  int getAmount() const noexcept { return this->amount; }
+  std::size_t getAmount() const noexcept { return this->amount; }
+};
+
+class Unwind : public Instruction {
+  void print(int indent, std::ostream &to) const override;
 };
 
 } // namespace ir

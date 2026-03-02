@@ -67,6 +67,8 @@ set(SRC_FILES
     src/context.cpp
     src/ast.cpp
     src/error.cpp
+    src/instructions.cpp
+    src/binop.cpp
 )
 
 # Main executable
