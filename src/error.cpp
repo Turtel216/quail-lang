@@ -3,7 +3,7 @@
 namespace ff {
 
 const char *TypeError::what() const noexcept {
-  return "an error occured type checking";
+  return "an error occured while type checking";
 }
 
 } // namespace ff
