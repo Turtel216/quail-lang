@@ -170,6 +170,8 @@ void AstApp::generate(
   this->left->generate(std::shared_ptr<ff::ir::EnviromentOffset>(
                            new ff::ir::EnviromentOffset(1, env)),
                        into);
+
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
 }
 
 void AstApp::print(int indent, std::ostream &to) const {
