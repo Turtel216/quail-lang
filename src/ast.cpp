@@ -398,11 +398,31 @@ void DefinitionDefn::resolve(const ff::sem::TypeManager &mgr) {
   }
 }
 
+void DefinitionDefn::generate() {
+  auto new_env = std::shared_ptr<ff::ir::Enviroment>(
+      new ff::ir::EnviromentOffset(0, nullptr));
+
+  for (auto it = params.rbegin(); it != params.rend(); it++) {
+    new_env = std::shared_ptr<ff::ir::Enviroment>(
+        new ff::ir::EnviromentVar(*it, new_env));
+  }
+
+  body->generate(new_env, this->instructions);
+  this->instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(params.size())));
+  this->instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(params.size())));
+}
+
 void DefinitionData::resolve(const ff::sem::TypeManager &mgr) {
   // TODO
 }
 
 void DefinitionData::typeCheckSecond(ff::sem::TypeManager &mgr,
                                      const ff::sem::TypeContext &env) const {
-  // TODO ?
+  // TODO
+}
+
+void DefinitionData::generate() {
+  // TODO
 }

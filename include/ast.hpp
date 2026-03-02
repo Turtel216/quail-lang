@@ -72,6 +72,8 @@ public:
                                const ff::sem::TypeContext &env) const = 0;
 
   virtual void resolve(const ff::sem::TypeManager &mgr) = 0;
+
+  virtual void generate() = 0;
 };
 
 class AstInt : public Ast {
@@ -227,6 +229,8 @@ public:
   std::shared_ptr<ff::sem::Type> returnType;
   std::vector<std::shared_ptr<ff::sem::Type>> paramTypes;
 
+  std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+
   DefinitionDefn(std::string _name, std::vector<std::string> _params,
                  std::unique_ptr<Ast> _body)
       : name(std::move(_name)), params(std::move(_params)),
@@ -238,6 +242,7 @@ public:
                        const ff::sem::TypeContext &env) const override;
 
   void resolve(const ff::sem::TypeManager &mgr) override;
+  void generate() override;
 };
 
 class DefinitionData : public Definition {
@@ -255,4 +260,6 @@ public:
                        const ff::sem::TypeContext &env) const override;
 
   void resolve(const ff::sem::TypeManager &mgr) override;
+
+  void generate() override;
 };

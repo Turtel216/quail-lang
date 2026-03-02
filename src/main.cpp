@@ -10,8 +10,8 @@ void yy::parser::error(const std::string &msg) {
 
 extern std::vector<std::unique_ptr<Definition>> program;
 
-void typecheck_program(const std::vector<std::unique_ptr<Definition>> &prog,
-                       ff::sem::TypeManager &mgr, ff::sem::TypeContext &env) {
+void typecheckProgram(const std::vector<std::unique_ptr<Definition>> &prog,
+                      ff::sem::TypeManager &mgr, ff::sem::TypeContext &env) {
   std::shared_ptr<ff::sem::Type> int_type =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
   std::shared_ptr<ff::sem::Type> binop_type =
@@ -43,6 +43,23 @@ void typecheck_program(const std::vector<std::unique_ptr<Definition>> &prog,
   }
 }
 
+void compileProgram(const std::vector<std::unique_ptr<Definition>> &prog) {
+  for (auto &def : prog) {
+    def->generate();
+
+    DefinitionDefn *defn = dynamic_cast<DefinitionDefn *>(def.get());
+
+    if (!defn)
+      continue;
+
+    for (auto &instruction : defn->instructions) {
+      instruction->print(0, std::cout);
+    }
+
+    std::cout << std::endl;
+  }
+}
+
 int main() {
   yy::parser parser;
   ff::sem::TypeManager mgr;
@@ -62,7 +79,8 @@ int main() {
     def->body->print(1, std::cout);
   }
   try {
-    typecheck_program(program, mgr, env);
+    typecheckProgram(program, mgr, env);
+    compileProgram(program);
   } catch (ff::UnificationError &err) {
     std::cout << "failed to unify types: " << std::endl;
     std::cout << "  (1) \033[34m";
