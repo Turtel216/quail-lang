@@ -1,0 +1,2 @@
+/usr/bin/ar qc libparser.a CMakeFiles/parser.dir/generated/parser.cpp.o CMakeFiles/parser.dir/generated/scanner.cpp.o
+/usr/bin/ranlib libparser.a

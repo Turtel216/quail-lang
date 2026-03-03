@@ -1,3 +1,8 @@
-fun main = { plus 320 6 }
+type List = { Nil, Cons Int List }
 
-fun plus x y  = { x + y }
+fun length l = {
+    match l with {
+        Nil -> { 0 }
+        Cons x xs -> { 1 + length xs }
+    }
+}

@@ -29,6 +29,8 @@ void Ast::commonResolve(const ff::sem::TypeManager &mgr) {
     throw ff::TypeError("ambiguous typed program");
 
   this->resolve(mgr);
+  if (!resolvedType)
+    std::cerr << "resolvedType is null" << std::endl;
   this->nodeType = std::move(resolvedType);
 }
 
@@ -220,6 +222,9 @@ void AstCase::generate(
   ff::sem::TypeData *type =
       dynamic_cast<ff::sem::TypeData *>(of->nodeType.get());
 
+  if (!type)
+    std::cerr << "Type is null" << std::endl;
+
   of->generate(env, into);
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
 
@@ -232,7 +237,13 @@ void AstCase::generate(
     PatternVar *vpat;
     PatternConstr *cpat;
 
+    if (branch->pattern.get())
+      std::cerr << "Does not crashes" << std::endl;
+
     if ((vpat = dynamic_cast<PatternVar *>(branch->pattern.get()))) {
+
+      printf("Crashes");
+      std::cerr << "Crashes" << std::endl;
       branch->expr->generate(std::shared_ptr<ff::ir::Enviroment>(
                                  new ff::ir::EnviromentOffset(1, env)),
                              branch_instructions);
@@ -363,7 +374,7 @@ void DefinitionData::typeCheckFirst(ff::sem::TypeManager &mgr,
   ff::sem::TypeData *this_type = new ff::sem::TypeData(name);
   std::shared_ptr<ff::sem::Type> return_type =
       std::shared_ptr<ff::sem::Type>(this_type);
-  int next_tag;
+  int next_tag = 0;
 
   for (auto &constructor : constructors) {
     constructor->tag = next_tag;
@@ -385,7 +396,7 @@ void DefinitionData::typeCheckFirst(ff::sem::TypeManager &mgr,
 
 void DefinitionDefn::resolve(const ff::sem::TypeManager &mgr) {
   ff::sem::TypeVar *var;
-  body->resolve(mgr);
+  body->commonResolve(mgr);
 
   this->returnType = mgr.resolve(this->returnType, var);
 
