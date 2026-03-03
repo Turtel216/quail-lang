@@ -32,5 +32,6 @@
 *.app
 
 /build
+/bebug
 compile_commands.json
 .cache
