@@ -365,7 +365,7 @@ void DefinitionDefn::typeCheckSecond(ff::sem::TypeManager &mgr,
     type_it++;
   }
 
-  std::shared_ptr<ff::sem::Type> body_type = body->typecheck(mgr, newEnv);
+  std::shared_ptr<ff::sem::Type> body_type = body->commonTypecheck(mgr, newEnv);
   mgr.unify(this->returnType, body_type);
 }
 
