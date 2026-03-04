@@ -29,8 +29,6 @@ void Ast::commonResolve(const ff::sem::TypeManager &mgr) {
     throw ff::TypeError("ambiguous typed program");
 
   this->resolve(mgr);
-  if (!resolvedType)
-    std::cerr << "resolvedType is null" << std::endl;
   this->nodeType = std::move(resolvedType);
 }
 
@@ -105,8 +103,8 @@ void AstUid::print(int indent, std::ostream &to) const {
 std::shared_ptr<ff::sem::Type>
 AstBinop::typecheck(ff::sem::TypeManager &mgr,
                     const ff::sem::TypeContext &env) const {
-  std::shared_ptr<ff::sem::Type> ltype = left->typecheck(mgr, env);
-  std::shared_ptr<ff::sem::Type> rtype = right->typecheck(mgr, env);
+  std::shared_ptr<ff::sem::Type> ltype = left->commonTypecheck(mgr, env);
+  std::shared_ptr<ff::sem::Type> rtype = right->commonTypecheck(mgr, env);
   std::shared_ptr<ff::sem::Type> ftype = env.lookup(opName(op));
   if (!ftype)
     throw ff::TypeError(std::string("unknown binary operator ") + opName(op));
@@ -150,8 +148,8 @@ void AstBinop::print(int indent, std::ostream &to) const {
 std::shared_ptr<ff::sem::Type>
 AstApp::typecheck(ff::sem::TypeManager &mgr,
                   const ff::sem::TypeContext &env) const {
-  std::shared_ptr<ff::sem::Type> ltype = left->typecheck(mgr, env);
-  std::shared_ptr<ff::sem::Type> rtype = right->typecheck(mgr, env);
+  std::shared_ptr<ff::sem::Type> ltype = left->commonTypecheck(mgr, env);
+  std::shared_ptr<ff::sem::Type> rtype = right->commonTypecheck(mgr, env);
 
   std::shared_ptr<ff::sem::Type> return_type = mgr.newType();
   std::shared_ptr<ff::sem::Type> arrow =
@@ -195,7 +193,7 @@ AstCase::typecheck(ff::sem::TypeManager &mgr,
                    const ff::sem::TypeContext &env) const {
   ff::sem::TypeVar *var;
   std::shared_ptr<ff::sem::Type> case_type =
-      mgr.resolve(of->typecheck(mgr, env), var);
+      mgr.resolve(of->commonTypecheck(mgr, env), var);
   std::shared_ptr<ff::sem::Type> branch_type = mgr.newType();
 
   for (auto &branch : branches) {
@@ -222,9 +220,6 @@ void AstCase::generate(
   ff::sem::TypeData *type =
       dynamic_cast<ff::sem::TypeData *>(of->nodeType.get());
 
-  if (!type)
-    std::cerr << "Type is null" << std::endl;
-
   of->generate(env, into);
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
 
@@ -237,13 +232,7 @@ void AstCase::generate(
     PatternVar *vpat;
     PatternConstr *cpat;
 
-    if (branch->pattern.get())
-      std::cerr << "Does not crashes" << std::endl;
-
     if ((vpat = dynamic_cast<PatternVar *>(branch->pattern.get()))) {
-
-      printf("Crashes");
-      std::cerr << "Crashes" << std::endl;
       branch->expr->generate(std::shared_ptr<ff::ir::Enviroment>(
                                  new ff::ir::EnviromentOffset(1, env)),
                              branch_instructions);
