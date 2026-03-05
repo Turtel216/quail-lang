@@ -205,12 +205,13 @@ llvm::Value *CodeGenerator::createEval(llvm::Value *e) {
 }
 
 llvm::Value *CodeGenerator::unwrapNum(llvm::Value *v) {
-  auto numPtr = llvm::PointerType::getUnqual(this->structTypes.at("node_num"));
+  auto structType = this->structTypes.at("node_num");
+  auto numPtr = llvm::PointerType::getUnqual(structType);
   auto cast = this->builder.CreatePointerCast(v, numPtr);
   auto offset_0 = this->createI32(0);
   auto offset_1 = this->createI32(1);
-  auto intPtr = this->builder.CreateGEP(cast, {offset_0, offset_1});
-  return this->builder.CreateLoad(intPtr);
+  auto intPtr = this->builder.CreateGEP(structType, cast, {offset_0, offset_1});
+  return this->builder.CreateLoad(structType, intPtr);
 }
 
 llvm::Value *CodeGenerator::createNum(llvm::Value *v) {
@@ -219,13 +220,13 @@ llvm::Value *CodeGenerator::createNum(llvm::Value *v) {
 }
 
 llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
-  auto dataPtr =
-      llvm::PointerType::getUnqual(this->structTypes.at("node_data"));
+  auto structType = this->structTypes.at("node_data");
+  auto dataPtr = llvm::PointerType::getUnqual(structType);
   auto cast = this->builder.CreatePointerCast(v, dataPtr);
   auto offset_0 = this->createI32(0);
   auto offset_1 = this->createI32(1);
-  auto tagPtr = this->builder.CreateGEP(cast, {offset_0, offset_1});
-  return this->builder.CreateLoad(tagPtr);
+  auto tagPtr = this->builder.CreateGEP(structType, cast, {offset_0, offset_1});
+  return this->builder.CreateLoad(structType, tagPtr);
 }
 
 llvm::Value *CodeGenerator::createGlobal(llvm::Value *f, llvm::Value *a) {
