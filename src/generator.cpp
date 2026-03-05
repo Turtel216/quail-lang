@@ -84,7 +84,7 @@ void CodeGenerator::createFunctions() {
       llvm::Function::LinkageTypes::ExternalLinkage, "stack_popn",
       &this->module);
 
-  this->functions["stack_slide"] = Function::Create(
+  this->functions["stack_slide"] = llvm::Function::Create(
       llvm::FunctionType::get(voidType, {this->stackPointerType, sizetType},
                               false),
       llvm::Function::LinkageTypes::ExternalLinkage, "stack_slide",
@@ -140,5 +140,122 @@ void CodeGenerator::createFunctions() {
       llvm::FunctionType::get(this->nodePtrType, {this->nodePtrType}, false),
       llvm::Function::LinkageTypes::ExternalLinkage, "eval", &this->module);
 }
+
+llvm::ConstantInt *CodeGenerator::createI8(std::int8_t i) {
+  return llvm::ConstantInt::get(ctx, llvm::APInt(8, i));
+}
+
+llvm::ConstantInt *CodeGenerator::createI32(std::int32_t i) {
+  return llvm::ConstantInt::get(ctx, llvm::APInt(32, i));
+}
+
+llvm::ConstantInt *CodeGenerator::createSize(std::size_t i) {
+  return llvm::ConstantInt::get(ctx, llvm::APInt(sizeof(size_t) * 8, i));
+}
+
+llvm::Value *CodeGenerator::createPop(llvm::Function *f) {
+  auto pop = this->functions.at("stack_pop");
+  return this->builder.CreateCall(pop, {f->arg_begin()});
+}
+
+llvm::Value *CodeGenerator::createPeek(llvm::Function *f, llvm::Value *off) {
+  auto peek = this->functions.at("stack_peek");
+  return this->builder.CreateCall(peek, {f->arg_begin(), off});
+}
+
+void CodeGenerator::createPush(llvm::Function *f, llvm::Value *v) {
+  auto push = this->functions.at("stack_push");
+  this->builder.CreateCall(push, {f->arg_begin(), v});
+}
+
+void CodeGenerator::createPop(llvm::Function *f, llvm::Value *off) {
+  auto popn = this->functions.at("stack_popn");
+  builder.CreateCall(popn, {f->arg_begin(), off});
+}
+
+void CodeGenerator::createUpdate(llvm::Function *f, llvm::Value *off) {
+  auto update = this->functions.at("stack_update");
+  this->builder.CreateCall(update, {f->arg_begin(), off});
+}
+
+void CodeGenerator::createPack(llvm::Function *f, llvm::Value *c,
+                               llvm::Value *t) {
+  auto pack = this->functions.at("stack_pack");
+  this->builder.CreateCall(pack, {f->arg_begin(), c, t});
+}
+
+void CodeGenerator::createSplit(llvm::Function *f, llvm::Value *c) {
+  auto split = this->functions.at("stack_split");
+  this->builder.CreateCall(split, {f->arg_begin(), c});
+}
+
+void CodeGenerator::createSlide(llvm::Function *f, llvm::Value *off) {
+  auto slide = this->functions.at("stack_slide");
+  this->builder.CreateCall(slide, {f->arg_begin(), off});
+}
+
+void CodeGenerator::createAlloc(llvm::Function *f, llvm::Value *n) {
+  auto alloc = this->functions.at("stack_alloc");
+  this->builder.CreateCall(alloc, {f->arg_begin(), n});
+}
+
+llvm::Value *CodeGenerator::createEval(llvm::Value *e) {
+  auto eval = this->functions.at("eval");
+  return this->builder.CreateCall(eval, {e});
+}
+
+llvm::Value *CodeGenerator::unwrapNum(llvm::Value *v) {
+  auto numPtr = llvm::PointerType::getUnqual(this->structTypes.at("node_num"));
+  auto cast = this->builder.CreatePointerCast(v, numPtr);
+  auto offset_0 = this->createI32(0);
+  auto offset_1 = this->createI32(1);
+  auto intPtr = this->builder.CreateGEP(cast, {offset_0, offset_1});
+  return this->builder.CreateLoad(intPtr);
+}
+
+llvm::Value *CodeGenerator::createNum(llvm::Value *v) {
+  auto allocNum = this->functions.at("alloc_num");
+  return this->builder.CreateCall(allocNum, {v});
+}
+
+llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
+  auto dataPtr =
+      llvm::PointerType::getUnqual(this->structTypes.at("node_data"));
+  auto cast = this->builder.CreatePointerCast(v, dataPtr);
+  auto offset_0 = this->createI32(0);
+  auto offset_1 = this->createI32(1);
+  auto tagPtr = this->builder.CreateGEP(cast, {offset_0, offset_1});
+  return this->builder.CreateLoad(tagPtr);
+}
+
+llvm::Value *CodeGenerator::createGlobal(llvm::Value *f, llvm::Value *a) {
+  auto allocGlobal = this->functions.at("alloc_global");
+  return this->builder.CreateCall(allocGlobal, {f, a});
+}
+
+llvm::Value *CodeGenerator::createApp(llvm::Value *l, llvm::Value *r) {
+  auto allocApp = this->functions.at("alloc_app");
+  return this->builder.CreateCall(allocApp, {l, r});
+}
+
+llvm::Function *CodeGenerator::createCustomFunction(std::string name,
+                                                    std::int32_t arity) {
+  auto voidType = llvm::Type::getVoidTy(ctx);
+  auto functionType =
+      llvm::FunctionType::get(voidType, {this->stackPointerType}, false);
+  auto newFunction = llvm::Function::Create(
+      functionType, llvm::Function::LinkageTypes::ExternalLinkage, "f_" + name,
+      &this->module);
+  auto startBlock = llvm::BasicBlock::Create(ctx, "entry", newFunction);
+
+  auto newCustome = std::unique_ptr<CustomFunction>(new CustomFunction());
+
+  newCustome->arity = arity;
+  newCustome->function = newFunction;
+  this->customFunctions["f_" + name] = std::move(newCustome);
+
+  return newFunction;
+}
+
 } // namespace cg
 } // namespace ff
