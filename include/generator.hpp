@@ -24,7 +24,7 @@ public: // TODO decide on encapsulation
 
   std::map<std::string, std::unique_ptr<CustomFunction>> customFunctions;
   std::map<std::string, llvm::Function *> functions;
-  std::map<std::string, llvm::StructType> structTypes;
+  std::map<std::string, llvm::StructType *> structTypes;
 
   llvm::StructType *stackType;
   llvm::PointerType *stackPointerType;

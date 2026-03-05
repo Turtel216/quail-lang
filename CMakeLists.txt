@@ -70,6 +70,7 @@ set(SRC_FILES
     src/instructions.cpp
     src/binop.cpp
     src/enviroment.cpp
+    src/generator.cpp
 )
 
 # Main executable
