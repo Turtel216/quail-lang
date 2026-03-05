@@ -254,8 +254,8 @@ void AstCase::generate(
             new ff::ir::EnviromentVar(*it, new_env));
       }
 
-      branch_instructions.push_back(
-          std::unique_ptr<ff::ir::Instruction>(new ff::ir::Split()));
+      branch_instructions.push_back(std::unique_ptr<ff::ir::Instruction>(
+          new ff::ir::Split(cpat->params.size())));
       branch->expr->generate(new_env, branch_instructions);
       branch_instructions.push_back(std::unique_ptr<ff::ir::Instruction>(
           new ff::ir::Slide(cpat->params.size())));

@@ -1,7 +1,7 @@
-
 #pragma once
 
 #include "binop.hpp"
+#include "generator.hpp"
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -16,6 +16,7 @@ class Instruction {
 public:
   virtual ~Instruction() = default;
 
+  virtual void generate(cg::CodeGenerator &, llvm::Function *) const = 0;
   virtual void print(int indent, std::ostream &to) const = 0;
 };
 
@@ -26,6 +27,7 @@ private:
 public:
   PushInt(int _value) noexcept : value(_value) {}
 
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
   int getValue() const noexcept { return this->value; }
 };
@@ -37,6 +39,7 @@ private:
 public:
   PushGlobal(std::string _name) noexcept : name(std::move(_name)) {}
 
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
   std::string getName() const noexcept { return this->name; }
 };
@@ -48,6 +51,7 @@ private:
 public:
   Push(int _offset) noexcept : offset(_offset) {}
 
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
   int getOffset() const noexcept { return this->offset; }
 };
@@ -59,6 +63,7 @@ private:
 public:
   Pop(std::size_t _count) noexcept : count(_count) {}
 
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
   std::size_t getCount() const noexcept { return this->count; }
 };
@@ -66,6 +71,7 @@ public:
 // Apply a function at the top of the stack to a value after it.
 class MkApp : public Instruction {
 public:
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -76,6 +82,7 @@ private:
 public:
   Update(int _offset) noexcept : offset(_offset) {}
 
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
   int getOffset() const noexcept { return this->offset; }
 };
@@ -88,6 +95,7 @@ private:
 public:
   Pack(int _tag, std::size_t _size) noexcept : tag(_tag), size(_size) {}
 
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
   int getTag() const noexcept { return this->tag; }
   std::size_t getSize() const noexcept { return this->size; }
@@ -95,6 +103,11 @@ public:
 
 class Split : public Instruction {
 public:
+  int size;
+
+  Split(int _size) noexcept : size(_size) {}
+
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -104,6 +117,7 @@ public:
   std::vector<std::vector<std::unique_ptr<Instruction>>> branches;
   std::map<int, int> tagMappings;
 
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -113,6 +127,8 @@ private:
 
 public:
   Slide(int _offset) noexcept : offset(_offset) {}
+
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -123,11 +139,13 @@ private:
 public:
   Binop(binop _op) noexcept : op(_op) {}
 
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
 class Eval : public Instruction {
 public:
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -138,11 +156,13 @@ private:
 public:
   Alloc(std::size_t _amount) noexcept : amount(_amount) {}
 
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
   std::size_t getAmount() const noexcept { return this->amount; }
 };
 
 class Unwind : public Instruction {
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
 };
 } // namespace ir
