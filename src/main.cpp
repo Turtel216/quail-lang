@@ -74,6 +74,7 @@ void compileProgram(const std::vector<std::unique_ptr<Definition>> &prog) {
 
 void generateLLVMInternalOp(ff::cg::CodeGenerator &generator, binop op) {
   auto newFunction = generator.createCustomFunction(opAction(op), 2);
+
   std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
   instructions.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Push(1)));
@@ -147,7 +148,7 @@ void generateLLVM(const std::vector<std::unique_ptr<Definition>> &prog) {
   }
 
   for (auto &defintion : prog) {
-    defintion->generateLLVMFirst(generator);
+    defintion->generateLLVMSecond(generator);
   }
 
   generator.module.print(llvm::outs(), nullptr);
