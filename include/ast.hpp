@@ -4,7 +4,9 @@
 #include "../include/context.hpp"
 #include "../include/types.hpp"
 #include "enviroment.hpp"
+#include "generator.hpp"
 #include "instructions.hpp"
+#include <llvm/IR/Function.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -74,6 +76,9 @@ public:
   virtual void resolve(const ff::sem::TypeManager &mgr) = 0;
 
   virtual void generate() = 0;
+
+  virtual void generateLLVMFirst(ff::cg::CodeGenerator &generator) = 0;
+  virtual void generateLLVMSecond(ff::cg::CodeGenerator &generator) = 0;
 };
 
 class AstInt : public Ast {
@@ -231,6 +236,8 @@ public:
 
   std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
 
+  llvm::Function *generatedFunction;
+
   DefinitionDefn(std::string _name, std::vector<std::string> _params,
                  std::unique_ptr<Ast> _body)
       : name(std::move(_name)), params(std::move(_params)),
@@ -243,6 +250,9 @@ public:
 
   void resolve(const ff::sem::TypeManager &mgr) override;
   void generate() override;
+
+  virtual void generateLLVMFirst(ff::cg::CodeGenerator &generator) override;
+  virtual void generateLLVMSecond(ff::cg::CodeGenerator &generator) override;
 };
 
 class DefinitionData : public Definition {
@@ -262,4 +272,7 @@ public:
   void resolve(const ff::sem::TypeManager &mgr) override;
 
   void generate() override;
+
+  virtual void generateLLVMFirst(ff::cg::CodeGenerator &generator) override;
+  virtual void generateLLVMSecond(ff::cg::CodeGenerator &generator) override;
 };

@@ -1,8 +1,3 @@
-type List = { Nil, Cons Int List }
+fun main = { sum 2 2 }
 
-fun length l = {
-    match l with {
-        Nil -> { 0 }
-        Cons x xs -> { 1 + length xs }
-    }
-}
+fun sum x y = { x + y }

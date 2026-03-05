@@ -416,6 +416,20 @@ void DefinitionDefn::generate() {
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(params.size())));
 }
 
+void DefinitionDefn::generateLLVMFirst(ff::cg::CodeGenerator &generator) {
+  this->generatedFunction =
+      generator.createCustomFunction(this->name, this->params.size());
+}
+
+void DefinitionDefn::generateLLVMSecond(ff::cg::CodeGenerator &generator) {
+  generator.builder.SetInsertPoint(&this->generatedFunction->getEntryBlock());
+  for (auto &instruction : this->instructions) {
+    instruction->generate(generator, this->generatedFunction);
+  }
+
+  generator.builder.CreateRetVoid();
+}
+
 void DefinitionData::resolve(const ff::sem::TypeManager &mgr) {
   // TODO
 }
@@ -428,3 +442,18 @@ void DefinitionData::typeCheckSecond(ff::sem::TypeManager &mgr,
 void DefinitionData::generate() {
   // TODO
 }
+
+void DefinitionData::generateLLVMFirst(ff::cg::CodeGenerator &generator) {
+  for (auto &constructor : this->constructors) {
+    auto newFunction = generator.createCustomFunction(
+        constructor->name, constructor->types.size());
+
+    generator.builder.SetInsertPoint(&newFunction->getEntryBlock());
+    generator.createPack(newFunction,
+                         generator.createSize(constructor->types.size()),
+                         generator.createI8(constructor->tag));
+    generator.builder.CreateRetVoid();
+  }
+}
+
+void DefinitionData::generateLLVMSecond(ff::cg::CodeGenerator &generator) {}

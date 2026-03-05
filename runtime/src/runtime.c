@@ -8,11 +8,32 @@ extern void f_main(struct stack *s);
 
 struct node_base *eval(struct node_base *n);
 
+void print_node(struct node_base *n) {
+  if (n->tag == NODE_APP) {
+    struct node_app *app = (struct node_app *)n;
+    print_node(app->left);
+    putchar(' ');
+    print_node(app->right);
+  } else if (n->tag == NODE_DATA) {
+    printf("(Packed)");
+  } else if (n->tag == NODE_GLOBAL) {
+    struct node_global *global = (struct node_global *)n;
+    printf("(Global: %p)", global->function);
+  } else if (n->tag == NODE_IND) {
+    print_node(((struct node_ind *)n)->next);
+  } else if (n->tag == NODE_NUM) {
+    struct node_num *num = (struct node_num *)n;
+    printf("%d", num->value);
+  }
+}
+
 int main(int argc, char **argv) {
   struct node_global *first_node = alloc_global(f_main, 0);
   struct node_base *result = eval((struct node_base *)first_node);
 
-  printf("%d\n", ((struct node_num *)result)->value);
+  printf("Result: ");
+  print_node(result);
+  putchar('\n');
 }
 
 void unwind(struct stack *s) {
