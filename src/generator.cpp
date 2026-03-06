@@ -1,4 +1,5 @@
 #include "../include/generator.hpp"
+#include <cstdio>
 #include <llvm/IR/DerivedTypes.h>
 
 namespace ff {
@@ -7,7 +8,7 @@ void CodeGenerator::createTypes() {
   this->stackType = llvm::StructType::create(this->ctx, "stack");
   this->gmachineType = llvm::StructType::create(this->ctx, "gmachine");
   this->stackPointerType = llvm::PointerType::getUnqual(this->stackType);
-  this->stackPointerType = llvm::PointerType::getUnqual(this->gmachineType);
+  this->gmachinePtrType = llvm::PointerType::getUnqual(this->gmachineType);
   this->tagType = llvm::IntegerType::getInt8Ty(this->ctx);
 
   this->structTypes["node_base"] =
@@ -25,10 +26,12 @@ void CodeGenerator::createTypes() {
 
   this->nodePtrType = llvm::PointerType::getUnqual(structTypes.at("node_base"));
   this->functionType = llvm::FunctionType::get(llvm::Type::getVoidTy(this->ctx),
-                                               {this->stackPointerType}, false);
+                                               {this->gmachinePtrType}, false);
+  this->gmachineType->setBody(this->stackPointerType, this->nodePtrType);
 
   this->structTypes.at("node_base")
-      ->setBody({llvm::IntegerType::getInt32Ty(this->ctx)});
+      ->setBody({llvm::IntegerType::getInt32Ty(this->ctx),
+                 llvm::IntegerType::getInt8Ty(this->ctx), this->nodePtrType});
 
   this->structTypes.at("node_app")
       ->setBody({this->structTypes.at("node_base"), this->nodePtrType,
@@ -89,34 +92,40 @@ void CodeGenerator::createFunctions() {
       llvm::Function::LinkageTypes::ExternalLinkage, "stack_popn",
       &this->module);
 
-  this->functions["stack_slide"] = llvm::Function::Create(
-      llvm::FunctionType::get(voidType, {this->stackPointerType, sizetType},
+  this->functions["gmachine_slide"] = llvm::Function::Create(
+      llvm::FunctionType::get(voidType, {this->gmachinePtrType, sizetType},
                               false),
-      llvm::Function::LinkageTypes::ExternalLinkage, "stack_slide",
+      llvm::Function::LinkageTypes::ExternalLinkage, "gmachine_slide",
       &this->module);
 
-  this->functions["stack_update"] = llvm::Function::Create(
-      llvm::FunctionType::get(voidType, {this->stackPointerType, sizetType},
+  this->functions["gmachine_update"] = llvm::Function::Create(
+      llvm::FunctionType::get(voidType, {this->gmachinePtrType, sizetType},
                               false),
-      llvm::Function::LinkageTypes::ExternalLinkage, "stack_update",
+      llvm::Function::LinkageTypes::ExternalLinkage, "gmachine_update",
+      &module);
+
+  this->functions["gmachine_alloc"] = llvm::Function::Create(
+      llvm::FunctionType::get(voidType, {this->gmachinePtrType, sizetType},
+                              false),
+      llvm::Function::LinkageTypes::ExternalLinkage, "gmachine_alloc",
       &this->module);
 
-  this->functions["stack_alloc"] = llvm::Function::Create(
-      llvm::FunctionType::get(voidType, {this->stackPointerType, sizetType},
-                              false),
-      llvm::Function::LinkageTypes::ExternalLinkage, "stack_alloc",
-      &this->module);
-
-  this->functions["stack_pack"] = llvm::Function::Create(
+  this->functions["gmachine_pack"] = llvm::Function::Create(
       llvm::FunctionType::get(
-          voidType, {this->stackPointerType, sizetType, this->tagType}, false),
-      llvm::Function::LinkageTypes::ExternalLinkage, "stack_pack",
+          voidType, {this->gmachinePtrType, sizetType, tagType}, false),
+      llvm::Function::LinkageTypes::ExternalLinkage, "gmachine_pack",
       &this->module);
 
-  this->functions["stack_split"] = llvm::Function::Create(
-      llvm::FunctionType::get(this->nodePtrType,
-                              {this->stackPointerType, sizetType}, false),
-      llvm::Function::LinkageTypes::ExternalLinkage, "stack_split",
+  functions["gmachine_split"] = llvm::Function::Create(
+      llvm::FunctionType::get(voidType, {this->gmachinePtrType, sizetType},
+                              false),
+      llvm::Function::LinkageTypes::ExternalLinkage, "gmachine_split",
+      &this->module);
+
+  functions["gmachine_track"] = llvm::Function::Create(
+      llvm::FunctionType::get(
+          this->nodePtrType, {this->gmachinePtrType, this->nodePtrType}, false),
+      llvm::Function::LinkageTypes::ExternalLinkage, "gmachine_track",
       &this->module);
 
   auto int32Type = llvm::IntegerType::getInt32Ty(ctx);
@@ -141,12 +150,8 @@ void CodeGenerator::createFunctions() {
       llvm::Function::LinkageTypes::ExternalLinkage, "alloc_ind",
       &this->module);
 
-  this->functions["eval"] = llvm::Function::Create(
-      llvm::FunctionType::get(this->nodePtrType, {this->nodePtrType}, false),
-      llvm::Function::LinkageTypes::ExternalLinkage, "eval", &this->module);
-
   this->functions["unwind"] = llvm::Function::Create(
-      llvm::FunctionType::get(voidType, {this->stackPointerType}, false),
+      llvm::FunctionType::get(voidType, {this->gmachinePtrType}, false),
       llvm::Function::LinkageTypes::ExternalLinkage, "unwind", &this->module);
 }
 
@@ -164,47 +169,50 @@ llvm::ConstantInt *CodeGenerator::createSize(std::size_t i) {
 
 llvm::Value *CodeGenerator::createPop(llvm::Function *f) {
   auto pop = this->functions.at("stack_pop");
-  return this->builder.CreateCall(pop, {f->arg_begin()});
+  return this->builder.CreateCall(pop,
+                                  {unwrapGmachineStackPtr(f->arg_begin())});
 }
 
 llvm::Value *CodeGenerator::createPeek(llvm::Function *f, llvm::Value *off) {
   auto peek = this->functions.at("stack_peek");
-  return this->builder.CreateCall(peek, {f->arg_begin(), off});
+  return this->builder.CreateCall(
+      peek, {unwrapGmachineStackPtr(f->arg_begin()), off});
 }
 
 void CodeGenerator::createPush(llvm::Function *f, llvm::Value *v) {
   auto push = this->functions.at("stack_push");
-  this->builder.CreateCall(push, {f->arg_begin(), v});
+  this->builder.CreateCall(push, {unwrapGmachineStackPtr(f->arg_begin()), v});
 }
 
 void CodeGenerator::createPop(llvm::Function *f, llvm::Value *off) {
   auto popn = this->functions.at("stack_popn");
-  builder.CreateCall(popn, {f->arg_begin(), off});
+  builder.CreateCall(popn, {unwrapGmachineStackPtr(f->arg_begin()), off});
 }
 
 void CodeGenerator::createUpdate(llvm::Function *f, llvm::Value *off) {
-  auto update = this->functions.at("stack_update");
-  this->builder.CreateCall(update, {f->arg_begin(), off});
+  auto update = this->functions.at("gmachine_update");
+  this->builder.CreateCall(update,
+                           {unwrapGmachineStackPtr(f->arg_begin()), off});
 }
 
 void CodeGenerator::createPack(llvm::Function *f, llvm::Value *c,
                                llvm::Value *t) {
-  auto pack = this->functions.at("stack_pack");
+  auto pack = this->functions.at("gmachine_pack");
   this->builder.CreateCall(pack, {f->arg_begin(), c, t});
 }
 
 void CodeGenerator::createSplit(llvm::Function *f, llvm::Value *c) {
-  auto split = this->functions.at("stack_split");
+  auto split = this->functions.at("gmachine_split");
   this->builder.CreateCall(split, {f->arg_begin(), c});
 }
 
 void CodeGenerator::createSlide(llvm::Function *f, llvm::Value *off) {
-  auto slide = this->functions.at("stack_slide");
+  auto slide = this->functions.at("gmachine_slide");
   this->builder.CreateCall(slide, {f->arg_begin(), off});
 }
 
 void CodeGenerator::createAlloc(llvm::Function *f, llvm::Value *n) {
-  auto alloc = this->functions.at("stack_alloc");
+  auto alloc = this->functions.at("gmachine_alloc");
   this->builder.CreateCall(alloc, {f->arg_begin(), n});
 }
 
@@ -228,9 +236,10 @@ llvm::Value *CodeGenerator::unwrapNum(llvm::Value *v) {
                                   intPtr);
 }
 
-llvm::Value *CodeGenerator::createNum(llvm::Value *v) {
+llvm::Value *CodeGenerator::createNum(llvm::Function *f, llvm::Value *v) {
   auto allocNum = this->functions.at("alloc_num");
-  return this->builder.CreateCall(allocNum, {v});
+  auto allocNumCall = builder.CreateCall(allocNum, {v});
+  return createTrack(f, allocNumCall);
 }
 
 llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
@@ -245,24 +254,29 @@ llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
                                   tagPtr);
 }
 
-llvm::Value *CodeGenerator::createGlobal(llvm::Value *f, llvm::Value *a) {
+llvm::Value *CodeGenerator::createGlobal(llvm::Function *f, llvm::Value *gf,
+                                         llvm::Value *a) {
   auto allocGlobal = this->functions.at("alloc_global");
-  return this->builder.CreateCall(allocGlobal, {f, a});
+  auto allocGlobalCall = builder.CreateCall(allocGlobal, {gf, a});
+
+  return createTrack(f, allocGlobalCall);
 }
 
-llvm::Value *CodeGenerator::createApp(llvm::Value *l, llvm::Value *r) {
+llvm::Value *CodeGenerator::createApp(llvm::Function *f, llvm::Value *l,
+                                      llvm::Value *r) {
   auto allocApp = this->functions.at("alloc_app");
-  return this->builder.CreateCall(allocApp, {l, r});
+  auto allocAppCall = builder.CreateCall(allocApp, {l, r});
+
+  return createTrack(f, allocAppCall);
 }
 
 llvm::Function *CodeGenerator::createCustomFunction(std::string name,
                                                     std::int32_t arity) {
   auto voidType = llvm::Type::getVoidTy(this->ctx);
-  auto functionType =
-      llvm::FunctionType::get(voidType, {this->stackPointerType}, false);
   auto newFunction = llvm::Function::Create(
-      functionType, llvm::Function::LinkageTypes::ExternalLinkage, "f_" + name,
-      &this->module);
+      this->functionType, llvm::Function::LinkageTypes::ExternalLinkage,
+      "f_" + name, &this->module);
+
   auto startBlock = llvm::BasicBlock::Create(ctx, "entry", newFunction);
 
   auto newCustome = std::unique_ptr<CustomFunction>(new CustomFunction());
@@ -279,5 +293,14 @@ void CodeGenerator::createUnwind(llvm::Function *f) {
   this->builder.CreateCall(unwind, {f->args().begin()});
 }
 
+llvm::Value *CodeGenerator::createTrack(llvm::Function *f, llvm::Value *v) {
+  auto track = this->functions.at("gmachine_track");
+  return builder.CreateCall(track, {f->arg_begin(), v});
+}
+
+llvm::Value *CodeGenerator::unwrapGmachineStackPtr(llvm::Value *g) {
+  auto offset0 = this->createI32(0);
+  return builder.CreateGEP(this->gmachineType, g, {offset0, offset0});
+}
 } // namespace cg
 } // namespace ff

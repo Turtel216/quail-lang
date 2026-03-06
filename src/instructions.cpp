@@ -10,7 +10,7 @@ static void printIndent(int n, std::ostream &to) {
 }
 
 void PushInt::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
-  generator.createPush(f, generator.createNum(generator.createI32(value)));
+  generator.createPush(f, generator.createNum(f, generator.createI32(value)));
 }
 
 void PushInt::print(int indent, std::ostream &to) const {
@@ -23,7 +23,7 @@ void PushGlobal::generate(cg::CodeGenerator &generator,
   auto &global = generator.customFunctions.at("f_" + name);
 
   auto arity = generator.createI32(global->arity);
-  generator.createPush(f, generator.createGlobal(global->function, arity));
+  generator.createPush(f, generator.createGlobal(f, global->function, arity));
 }
 
 void PushGlobal::print(int indent, std::ostream &to) const {
@@ -54,7 +54,7 @@ void MkApp::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
   auto left = generator.createPop(f);
   auto right = generator.createPop(f);
 
-  generator.createPush(f, generator.createApp(left, right));
+  generator.createPush(f, generator.createApp(f, left, right));
 }
 
 void MkApp::print(int indent, std::ostream &to) const {
@@ -160,7 +160,7 @@ void Binop::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
     break;
   }
 
-  generator.createPush(f, generator.createNum(result));
+  generator.createPush(f, generator.createNum(f, result));
 }
 
 void Binop::print(int indent, std::ostream &to) const {

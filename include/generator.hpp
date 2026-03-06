@@ -56,16 +56,17 @@ public: // TODO decide on encapsulation
   void createSlide(llvm::Function *, llvm::Value *);
   void createAlloc(llvm::Function *, llvm::Value *);
   void createUnwind(llvm::Function *);
+  llvm::Value *createTrack(llvm::Function *, llvm::Value *);
   llvm::Value *createEval(llvm::Value *);
 
   llvm::Value *unwrapNum(llvm::Value *);
-  llvm::Value *createNum(llvm::Value *);
+  llvm::Value *createNum(llvm::Function *, llvm::Value *);
 
   llvm::Value *unwrapDataTag(llvm::Value *);
+  llvm::Value *unwrapGmachineStackPtr(llvm::Value *g);
+  llvm::Value *createGlobal(llvm::Function *, llvm::Value *, llvm::Value *);
 
-  llvm::Value *createGlobal(llvm::Value *, llvm::Value *);
-
-  llvm::Value *createApp(llvm::Value *, llvm::Value *);
+  llvm::Value *createApp(llvm::Function *, llvm::Value *, llvm::Value *);
 
   llvm::Function *createCustomFunction(std::string name, int32_t arity);
 };

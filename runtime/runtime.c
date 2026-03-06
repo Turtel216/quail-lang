@@ -262,6 +262,27 @@ struct node_base *gmachine_track(struct gmachine *g, struct node_base *b) {
   return b;
 }
 
+void gmachine_slide(struct gmachine *g, size_t n) {
+  assert(g->stack.count > n);
+  g->stack.data[g->stack.count - n - 1] = g->stack.data[g->stack.count - 1];
+  g->stack.count -= n;
+}
+
+void gmachine_split(struct gmachine *g, size_t n) {
+  struct node_data *node = (struct node_data *)stack_pop(&g->stack);
+  for (size_t i = 0; i < n; i++) {
+    stack_push(&g->stack, node->array[i]);
+  }
+}
+
+void gmachine_update(struct gmachine *g, size_t o) {
+  assert(g->stack.count > o + 1);
+  struct node_ind *ind =
+      (struct node_ind *)g->stack.data[g->stack.count - o - 2];
+  ind->base.tag = NODE_IND;
+  ind->next = g->stack.data[g->stack.count -= 1];
+}
+
 void gmachine_init(struct gmachine *g) {
   stack_init(&g->stack);
   g->gc_nodes = NULL;
