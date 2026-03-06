@@ -1,4 +1,4 @@
-#include "../include/runtime.h"
+#include "runtime.h"
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
