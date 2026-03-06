@@ -26,20 +26,23 @@ void CodeGenerator::createTypes() {
                                                {this->stackPointerType}, false);
 
   this->structTypes.at("node_base")
-      ->setBody(llvm::IntegerType::getInt32Ty(this->ctx));
+      ->setBody({llvm::IntegerType::getInt32Ty(this->ctx)});
 
   this->structTypes.at("node_app")
       ->setBody({this->structTypes.at("node_base"), this->nodePtrType,
                  this->nodePtrType});
+
   this->structTypes.at("node_num")
-      ->setBody(this->structTypes.at("node_base"),
-                llvm::IntegerType::getInt32Ty(ctx));
+      ->setBody({this->structTypes.at("node_base"),
+                 llvm::IntegerType::getInt32Ty(ctx)});
+
   this->structTypes.at("node_global")
-      ->setBody(this->structTypes.at("node_base"),
-                llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
-                                        {this->stackPointerType}, false));
+      ->setBody({this->structTypes.at("node_base"),
+                 llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
+                                         {this->stackPointerType}, false)});
   this->structTypes.at("node_ind")
-      ->setBody(this->structTypes.at("node_base"), this->nodePtrType);
+      ->setBody({this->structTypes.at("node_base"), this->nodePtrType});
+
   this->structTypes.at("node_data")
       ->setBody({this->structTypes.at("node_base"),
                  llvm::IntegerType::getInt8Ty(this->ctx),
@@ -206,12 +209,17 @@ llvm::Value *CodeGenerator::createEval(llvm::Value *e) {
 
 llvm::Value *CodeGenerator::unwrapNum(llvm::Value *v) {
   auto structType = this->structTypes.at("node_num");
-  auto numPtr = llvm::PointerType::getUnqual(structType);
-  auto cast = this->builder.CreatePointerCast(v, numPtr);
-  auto offset_0 = this->createI32(0);
-  auto offset_1 = this->createI32(1);
-  auto intPtr = this->builder.CreateGEP(structType, cast, {offset_0, offset_1});
-  return this->builder.CreateLoad(structType, intPtr);
+  auto numPtrType =
+      llvm::PointerType::getUnqual(this->structTypes.at("node_num"));
+  auto cast = builder.CreatePointerCast(v, numPtrType);
+
+  auto offset0 = this->createI32(0);
+  auto offset1 = this->createI32(1);
+
+  auto intPtr = this->builder.CreateGEP(structType, cast, {offset0, offset1});
+
+  return this->builder.CreateLoad(llvm::IntegerType::getInt32Ty(this->ctx),
+                                  intPtr);
 }
 
 llvm::Value *CodeGenerator::createNum(llvm::Value *v) {
@@ -225,8 +233,10 @@ llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
   auto cast = this->builder.CreatePointerCast(v, dataPtr);
   auto offset_0 = this->createI32(0);
   auto offset_1 = this->createI32(1);
+
   auto tagPtr = this->builder.CreateGEP(structType, cast, {offset_0, offset_1});
-  return this->builder.CreateLoad(structType, tagPtr);
+  return this->builder.CreateLoad(llvm::IntegerType::getInt8Ty(this->ctx),
+                                  tagPtr);
 }
 
 llvm::Value *CodeGenerator::createGlobal(llvm::Value *f, llvm::Value *a) {
@@ -241,7 +251,7 @@ llvm::Value *CodeGenerator::createApp(llvm::Value *l, llvm::Value *r) {
 
 llvm::Function *CodeGenerator::createCustomFunction(std::string name,
                                                     std::int32_t arity) {
-  auto voidType = llvm::Type::getVoidTy(ctx);
+  auto voidType = llvm::Type::getVoidTy(this->ctx);
   auto functionType =
       llvm::FunctionType::get(voidType, {this->stackPointerType}, false);
   auto newFunction = llvm::Function::Create(

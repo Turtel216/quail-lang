@@ -154,6 +154,7 @@ void Binop::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
     result = generator.builder.CreateSDiv(leftInt, rightInt);
     break;
   }
+
   generator.createPush(f, generator.createNum(result));
 }
 

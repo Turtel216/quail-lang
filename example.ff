@@ -1,3 +1,2 @@
-fun add x y = { x + y }
-fun double x = { add x x }
-fun main = { double 163 }
+fun main = { sum 3 5 }
+fun sum x y = { x - y }
