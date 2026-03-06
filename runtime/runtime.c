@@ -1,77 +1,16 @@
 #include "runtime.h"
 #include <assert.h>
-#include <stddef.h>
+#include <memory.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 extern void f_main(struct gmachine *s);
 
-void print_node(struct node_base *n) {
-  if (n->tag == NODE_APP) {
-    struct node_app *app = (struct node_app *)n;
-    print_node(app->left);
-    putchar(' ');
-    print_node(app->right);
-  } else if (n->tag == NODE_DATA) {
-    printf("(Packed)");
-  } else if (n->tag == NODE_GLOBAL) {
-    struct node_global *global = (struct node_global *)n;
-    printf("(Global: %p)", global->function);
-  } else if (n->tag == NODE_IND) {
-    print_node(((struct node_ind *)n)->next);
-  } else if (n->tag == NODE_NUM) {
-    struct node_num *num = (struct node_num *)n;
-    printf("%d", num->value);
-  }
-}
-
-void unwind(struct gmachine *g) {
-  struct stack *s = &g->stack;
-
-  while (1) {
-    struct node_base *peek = stack_peek(s, 0);
-    if (peek->tag == NODE_APP) {
-      struct node_app *n = (struct node_app *)peek;
-      stack_push(s, n->left);
-    } else if (peek->tag == NODE_GLOBAL) {
-      struct node_global *n = (struct node_global *)peek;
-      assert(s->count > n->arity);
-
-      for (size_t i = 1; i <= n->arity; i++) {
-        s->data[s->count - i] =
-            ((struct node_app *)s->data[s->count - i - 1])->right;
-      }
-
-      n->function(g);
-    } else if (peek->tag == NODE_IND) {
-      struct node_ind *n = (struct node_ind *)peek;
-      stack_pop(s);
-      stack_push(s, n->next);
-    } else {
-      break;
-    }
-  }
-}
-
-int main(int argc, char **argv) {
-  struct gmachine gmachine;
-  struct node_global *first_node = alloc_global(f_main, 0);
-  struct node_base *result;
-
-  gmachine_init(&gmachine);
-  gmachine_track(&gmachine, (struct node_base *)first_node);
-  stack_push(&gmachine.stack, (struct node_base *)first_node);
-  unwind(&gmachine);
-  result = stack_pop(&gmachine.stack);
-  printf("Result: ");
-  print_node(result);
-  putchar('\n');
-  gmachine_free(&gmachine);
-}
-
 struct node_base *alloc_node() {
   struct node_base *new_node = malloc(sizeof(struct node_app));
+  new_node->gc_next = NULL;
+  new_node->gc_reachable = 0;
   assert(new_node != NULL);
   return new_node;
 }
@@ -106,6 +45,36 @@ struct node_ind *alloc_ind(struct node_base *n) {
   return node;
 }
 
+void free_node_direct(struct node_base *n) {
+  if (n->tag == NODE_DATA) {
+    free(((struct node_data *)n)->array);
+  }
+}
+
+void gc_visit_node(struct node_base *n) {
+  if (n->gc_reachable)
+    return;
+  n->gc_reachable = 1;
+
+  if (n->tag == NODE_APP) {
+    struct node_app *app = (struct node_app *)n;
+    gc_visit_node(app->left);
+    gc_visit_node(app->right);
+  }
+  if (n->tag == NODE_IND) {
+    struct node_ind *ind = (struct node_ind *)n;
+    gc_visit_node(ind->next);
+  }
+  if (n->tag == NODE_DATA) {
+    struct node_data *data = (struct node_data *)n;
+    struct node_base **to_visit = data->array;
+    while (*to_visit) {
+      gc_visit_node(*to_visit);
+      to_visit++;
+    }
+  }
+}
+
 void stack_init(struct stack *s) {
   s->size = 4;
   s->count = 0;
@@ -138,69 +107,44 @@ void stack_popn(struct stack *s, size_t n) {
   s->count -= n;
 }
 
-void stack_slide(struct stack *s, size_t n) {
-  assert(s->count > n);
-  s->data[s->count - n - 1] = s->data[s->count - 1];
-  s->count -= n;
+void gmachine_init(struct gmachine *g) {
+  stack_init(&g->stack);
+  g->gc_nodes = NULL;
+  g->gc_node_count = 0;
+  g->gc_node_threshold = 128;
 }
 
-void stack_update(struct stack *s, size_t o) {
-  assert(s->count > o + 1);
-  struct node_ind *ind = (struct node_ind *)s->data[s->count - o - 2];
+void gmachine_free(struct gmachine *g) {
+  stack_free(&g->stack);
+  struct node_base *to_free = g->gc_nodes;
+  struct node_base *next;
+
+  while (to_free) {
+    next = to_free->gc_next;
+    free_node_direct(to_free);
+    free(to_free);
+    to_free = next;
+  }
+}
+
+void gmachine_slide(struct gmachine *g, size_t n) {
+  assert(g->stack.count > n);
+  g->stack.data[g->stack.count - n - 1] = g->stack.data[g->stack.count - 1];
+  g->stack.count -= n;
+}
+
+void gmachine_update(struct gmachine *g, size_t o) {
+  assert(g->stack.count > o + 1);
+  struct node_ind *ind =
+      (struct node_ind *)g->stack.data[g->stack.count - o - 2];
   ind->base.tag = NODE_IND;
-  ind->next = s->data[s->count -= 1];
+  ind->next = g->stack.data[g->stack.count -= 1];
 }
 
-void stack_alloc(struct stack *s, size_t o) {
+void gmachine_alloc(struct gmachine *g, size_t o) {
   while (o--) {
-    stack_push(s, (struct node_base *)alloc_ind(NULL));
-  }
-}
-
-void stack_pack(struct stack *s, size_t n, int8_t t) {
-  assert(s->count >= n);
-
-  struct node_base **data = malloc(sizeof(*data) * n);
-  assert(data != NULL);
-  memcpy(data, &s->data[s->count - n], n * sizeof(*data));
-
-  struct node_data *new_node = (struct node_data *)alloc_node();
-  new_node->array = data;
-  new_node->base.tag = NODE_DATA;
-  new_node->tag = t;
-
-  stack_popn(s, n);
-  stack_push(s, (struct node_base *)new_node);
-}
-
-void stack_split(struct stack *s, size_t n) {
-  struct node_data *node = (struct node_data *)stack_pop(s);
-  for (size_t i = 0; i < n; i++) {
-    stack_push(s, node->array[i]);
-  }
-}
-
-void gc_visit_node(struct node_base *n) {
-  if (n->gc_reachable)
-    return;
-  n->gc_reachable = 1;
-
-  if (n->tag == NODE_APP) {
-    struct node_app *app = (struct node_app *)n;
-    gc_visit_node(app->left);
-    gc_visit_node(app->right);
-  }
-  if (n->tag == NODE_IND) {
-    struct node_ind *ind = (struct node_ind *)n;
-    gc_visit_node(ind->next);
-  }
-  if (n->tag == NODE_DATA) {
-    struct node_data *data = (struct node_data *)n;
-    struct node_base **to_visit = data->array;
-    while (*to_visit) {
-      gc_visit_node(*to_visit);
-      to_visit++;
-    }
+    stack_push(&g->stack,
+               gmachine_track(g, (struct node_base *)alloc_ind(NULL)));
   }
 }
 
@@ -221,10 +165,26 @@ void gmachine_pack(struct gmachine *g, size_t n, int8_t t) {
   stack_push(&g->stack, gmachine_track(g, (struct node_base *)new_node));
 }
 
-void free_node_direct(struct node_base *n) {
-  if (n->tag == NODE_DATA) {
-    free(((struct node_data *)n)->array);
+void gmachine_split(struct gmachine *g, size_t n) {
+  struct node_data *node = (struct node_data *)stack_pop(&g->stack);
+  for (size_t i = 0; i < n; i++) {
+    stack_push(&g->stack, node->array[i]);
   }
+}
+
+struct node_base *gmachine_track(struct gmachine *g, struct node_base *b) {
+  g->gc_node_count++;
+  b->gc_next = g->gc_nodes;
+  g->gc_nodes = b;
+
+  if (g->gc_node_count >= g->gc_node_threshold) {
+    uint64_t nodes_before = g->gc_node_count;
+    gc_visit_node(b);
+    gmachine_gc(g);
+    g->gc_node_threshold = g->gc_node_count * 2;
+  }
+
+  return b;
 }
 
 void gmachine_gc(struct gmachine *g) {
@@ -247,58 +207,65 @@ void gmachine_gc(struct gmachine *g) {
   }
 }
 
-struct node_base *gmachine_track(struct gmachine *g, struct node_base *b) {
-  g->gc_node_count++;
-  b->gc_next = g->gc_nodes;
-  g->gc_nodes = b;
+void unwind(struct gmachine *g) {
+  struct stack *s = &g->stack;
 
-  if (g->gc_node_count >= g->gc_node_threshold) {
-    uint64_t nodes_before = g->gc_node_count;
-    gc_visit_node(b);
-    gmachine_gc(g);
-    g->gc_node_threshold = g->gc_node_count * 2;
+  while (1) {
+    struct node_base *peek = stack_peek(s, 0);
+    if (peek->tag == NODE_APP) {
+      struct node_app *n = (struct node_app *)peek;
+      stack_push(s, n->left);
+    } else if (peek->tag == NODE_GLOBAL) {
+      struct node_global *n = (struct node_global *)peek;
+      assert(s->count > n->arity);
+
+      for (size_t i = 1; i <= n->arity; i++) {
+        s->data[s->count - i] =
+            ((struct node_app *)s->data[s->count - i - 1])->right;
+      }
+
+      n->function(g);
+    } else if (peek->tag == NODE_IND) {
+      struct node_ind *n = (struct node_ind *)peek;
+      stack_pop(s);
+      stack_push(s, n->next);
+    } else {
+      break;
+    }
   }
-
-  return b;
 }
 
-void gmachine_slide(struct gmachine *g, size_t n) {
-  assert(g->stack.count > n);
-  g->stack.data[g->stack.count - n - 1] = g->stack.data[g->stack.count - 1];
-  g->stack.count -= n;
-}
-
-void gmachine_split(struct gmachine *g, size_t n) {
-  struct node_data *node = (struct node_data *)stack_pop(&g->stack);
-  for (size_t i = 0; i < n; i++) {
-    stack_push(&g->stack, node->array[i]);
+void print_node(struct node_base *n) {
+  if (n->tag == NODE_APP) {
+    struct node_app *app = (struct node_app *)n;
+    print_node(app->left);
+    putchar(' ');
+    print_node(app->right);
+  } else if (n->tag == NODE_DATA) {
+    printf("(Packed)");
+  } else if (n->tag == NODE_GLOBAL) {
+    struct node_global *global = (struct node_global *)n;
+    printf("(Global: %p)", global->function);
+  } else if (n->tag == NODE_IND) {
+    print_node(((struct node_ind *)n)->next);
+  } else if (n->tag == NODE_NUM) {
+    struct node_num *num = (struct node_num *)n;
+    printf("%d", num->value);
   }
 }
 
-void gmachine_update(struct gmachine *g, size_t o) {
-  assert(g->stack.count > o + 1);
-  struct node_ind *ind =
-      (struct node_ind *)g->stack.data[g->stack.count - o - 2];
-  ind->base.tag = NODE_IND;
-  ind->next = g->stack.data[g->stack.count -= 1];
-}
+int main(int argc, char **argv) {
+  struct gmachine gmachine;
+  struct node_global *first_node = alloc_global(f_main, 0);
+  struct node_base *result;
 
-void gmachine_init(struct gmachine *g) {
-  stack_init(&g->stack);
-  g->gc_nodes = NULL;
-  g->gc_node_count = 0;
-  g->gc_node_threshold = 128;
-}
-
-void gmachine_free(struct gmachine *g) {
-  stack_free(&g->stack);
-  struct node_base *to_free = g->gc_nodes;
-  struct node_base *next;
-
-  while (to_free) {
-    next = to_free->gc_next;
-    free_node_direct(to_free);
-    free(to_free);
-    to_free = next;
-  }
+  gmachine_init(&gmachine);
+  gmachine_track(&gmachine, (struct node_base *)first_node);
+  stack_push(&gmachine.stack, (struct node_base *)first_node);
+  unwind(&gmachine);
+  result = stack_pop(&gmachine.stack);
+  printf("Result: ");
+  print_node(result);
+  putchar('\n');
+  gmachine_free(&gmachine);
 }
