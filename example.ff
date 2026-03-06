@@ -1,2 +1,17 @@
-fun main = { sum 3 5 }
-fun sum x y = { x - y }
+type List = { Nil, Cons Int List }
+
+fun sumZip l m = {
+    match l with {
+        Nil -> { 0 }
+        Cons x xs -> {
+            match m with {
+                Nil -> { 0 }
+                Cons y ys -> { x + y + sumZip xs ys }
+            }
+        }
+    }
+}
+
+fun ones = { Cons 1 ones }
+
+fun main = { sumZip ones (Cons 1 (Cons 2 (Cons 3 Nil))) }
