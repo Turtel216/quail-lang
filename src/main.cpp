@@ -1,10 +1,12 @@
 #include "../include/ast.hpp"
+#include "../include/cli.hpp"
 #include "../include/error.hpp"
 #include "../include/types.hpp"
 #include "binop.hpp"
 #include "generator.hpp"
 #include "instructions.hpp"
 #include "parser.hpp"
+#include <cstdio>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/MC/TargetRegistry.h>
@@ -15,6 +17,9 @@
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/TargetParser/Host.h>
 #include <optional>
+#include <stdexcept>
+
+extern FILE *yyin;
 
 void yy::parser::error(const std::string &msg) {
   std::cout << "An error occured: " << msg << std::endl;
@@ -140,7 +145,8 @@ void outputLLVM(ff::cg::CodeGenerator &generator, const std::string &filename) {
   }
 }
 
-void generateLLVM(const std::vector<std::unique_ptr<Definition>> &prog) {
+void generateLLVM(const std::vector<std::unique_ptr<Definition>> &prog,
+                  const std::string &output_file) {
   ff::cg::CodeGenerator generator;
   generateLLVMInternalOp(generator, PLUS);
   generateLLVMInternalOp(generator, MINUS);
@@ -156,31 +162,46 @@ void generateLLVM(const std::vector<std::unique_ptr<Definition>> &prog) {
   }
 
   generator.module.print(llvm::outs(), nullptr);
-  outputLLVM(generator, "output.o");
+  outputLLVM(generator, output_file);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
   yy::parser parser;
   ff::sem::TypeManager mgr;
   ff::sem::TypeContext env;
 
-  parser.parse();
-  for (auto &definition : program) {
-    DefinitionDefn *def = dynamic_cast<DefinitionDefn *>(definition.get());
-    if (!def)
-      continue;
-
-    std::cout << def->name;
-    for (auto &param : def->params)
-      std::cout << " " << param;
-    std::cout << ":" << std::endl;
-
-    def->body->print(1, std::cout);
-  }
   try {
+    ff::drv::Cli cli(argc, argv);
+
+    if (cli.help_requested) {
+      cli.print_usage(argv[0]);
+      return 0;
+    }
+
+    FILE *file = fopen(cli.source_file.c_str(), "r");
+    if (!file) {
+      llvm::errs() << "Error: Could not open file" << cli.source_file << '\n';
+    }
+
+    yyin = file;
+
+    parser.parse();
+    for (auto &definition : program) {
+      DefinitionDefn *def = dynamic_cast<DefinitionDefn *>(definition.get());
+      if (!def)
+        continue;
+
+      std::cout << def->name;
+      for (auto &param : def->params)
+        std::cout << " " << param;
+      std::cout << ":" << std::endl;
+
+      def->body->print(1, std::cout);
+    }
+
     typecheckProgram(program, mgr, env);
     compileProgram(program);
-    generateLLVM(program);
+    generateLLVM(program, cli.output_file);
   } catch (ff::UnificationError &err) {
     std::cout << "failed to unify types: " << std::endl;
     std::cout << "  (1) \033[34m";
@@ -194,5 +215,7 @@ int main() {
   } catch (ff::TypeError &err) {
     std::cout << "failed to type check program: " << err.description
               << std::endl;
+  } catch (std::runtime_error &err) {
+    std::cout << err.what();
   }
 }

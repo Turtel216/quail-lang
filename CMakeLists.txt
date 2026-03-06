@@ -71,6 +71,7 @@ set(SRC_FILES
     src/binop.cpp
     src/enviroment.cpp
     src/generator.cpp
+    src/cli.cpp
 )
 
 # Main executable
