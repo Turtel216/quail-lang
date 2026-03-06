@@ -5,9 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern void f_main(struct stack *s);
-
-struct node_base *eval(struct node_base *n);
+extern void f_main(struct gmachine *s);
 
 void print_node(struct node_base *n) {
   if (n->tag == NODE_APP) {
@@ -28,12 +26,9 @@ void print_node(struct node_base *n) {
   }
 }
 
-int main(int argc, char **argv) {
-  struct node_global *first_node = alloc_global(f_main, 0);
-  struct node_base *result = eval((struct node_base *)first_node);
-}
+void unwind(struct gmachine *g) {
+  struct stack *s = &g->stack;
 
-void unwind(struct stack *s) {
   while (1) {
     struct node_base *peek = stack_peek(s, 0);
     if (peek->tag == NODE_APP) {
@@ -48,7 +43,7 @@ void unwind(struct stack *s) {
             ((struct node_app *)s->data[s->count - i - 1])->right;
       }
 
-      n->function(s);
+      n->function(g);
     } else if (peek->tag == NODE_IND) {
       struct node_ind *n = (struct node_ind *)peek;
       stack_pop(s);
@@ -59,19 +54,20 @@ void unwind(struct stack *s) {
   }
 }
 
-struct node_base *eval(struct node_base *n) {
-  struct stack program_stack;
-  stack_init(&program_stack);
-  stack_push(&program_stack, n);
-  unwind(&program_stack);
-  struct node_base *result = stack_pop(&program_stack);
-  stack_free(&program_stack);
+int main(int argc, char **argv) {
+  struct gmachine gmachine;
+  struct node_global *first_node = alloc_global(f_main, 0);
+  struct node_base *result;
 
+  gmachine_init(&gmachine);
+  gmachine_track(&gmachine, (struct node_base *)first_node);
+  stack_push(&gmachine.stack, (struct node_base *)first_node);
+  unwind(&gmachine);
+  result = stack_pop(&gmachine.stack);
   printf("Result: ");
   print_node(result);
   putchar('\n');
-
-  return result;
+  gmachine_free(&gmachine);
 }
 
 struct node_base *alloc_node() {
@@ -95,7 +91,7 @@ struct node_num *alloc_num(int32_t n) {
   return node;
 }
 
-struct node_global *alloc_global(void (*f)(struct stack *), int32_t a) {
+struct node_global *alloc_global(void (*f)(struct gmachine *), int32_t a) {
   struct node_global *node = (struct node_global *)alloc_node();
   node->base.tag = NODE_GLOBAL;
   node->arity = a;
@@ -181,5 +177,107 @@ void stack_split(struct stack *s, size_t n) {
   struct node_data *node = (struct node_data *)stack_pop(s);
   for (size_t i = 0; i < n; i++) {
     stack_push(s, node->array[i]);
+  }
+}
+
+void gc_visit_node(struct node_base *n) {
+  if (n->gc_reachable)
+    return;
+  n->gc_reachable = 1;
+
+  if (n->tag == NODE_APP) {
+    struct node_app *app = (struct node_app *)n;
+    gc_visit_node(app->left);
+    gc_visit_node(app->right);
+  }
+  if (n->tag == NODE_IND) {
+    struct node_ind *ind = (struct node_ind *)n;
+    gc_visit_node(ind->next);
+  }
+  if (n->tag == NODE_DATA) {
+    struct node_data *data = (struct node_data *)n;
+    struct node_base **to_visit = data->array;
+    while (*to_visit) {
+      gc_visit_node(*to_visit);
+      to_visit++;
+    }
+  }
+}
+
+void gmachine_pack(struct gmachine *g, size_t n, int8_t t) {
+  assert(g->stack.count >= n);
+
+  struct node_base **data = malloc(sizeof(*data) * (n + 1));
+  assert(data != NULL);
+  memcpy(data, &g->stack.data[g->stack.count - n], n * sizeof(*data));
+  data[n] = NULL;
+
+  struct node_data *new_node = (struct node_data *)alloc_node();
+  new_node->array = data;
+  new_node->base.tag = NODE_DATA;
+  new_node->tag = t;
+
+  stack_popn(&g->stack, n);
+  stack_push(&g->stack, gmachine_track(g, (struct node_base *)new_node));
+}
+
+void free_node_direct(struct node_base *n) {
+  if (n->tag == NODE_DATA) {
+    free(((struct node_data *)n)->array);
+  }
+}
+
+void gmachine_gc(struct gmachine *g) {
+  for (size_t i = 0; i < g->stack.count; i++) {
+    gc_visit_node(g->stack.data[i]);
+  }
+
+  struct node_base **head_ptr = &g->gc_nodes;
+  while (*head_ptr) {
+    if ((*head_ptr)->gc_reachable) {
+      (*head_ptr)->gc_reachable = 0;
+      head_ptr = &(*head_ptr)->gc_next;
+    } else {
+      struct node_base *to_free = *head_ptr;
+      *head_ptr = to_free->gc_next;
+      free_node_direct(to_free);
+      free(to_free);
+      g->gc_node_count--;
+    }
+  }
+}
+
+struct node_base *gmachine_track(struct gmachine *g, struct node_base *b) {
+  g->gc_node_count++;
+  b->gc_next = g->gc_nodes;
+  g->gc_nodes = b;
+
+  if (g->gc_node_count >= g->gc_node_threshold) {
+    uint64_t nodes_before = g->gc_node_count;
+    gc_visit_node(b);
+    gmachine_gc(g);
+    g->gc_node_threshold = g->gc_node_count * 2;
+  }
+
+  return b;
+}
+
+void gmachine_init(struct gmachine *g) {
+  stack_init(&g->stack);
+  g->gc_nodes = NULL;
+  g->gc_node_count = 0;
+  g->gc_node_threshold = 128;
+}
+
+void gmachine_free(struct gmachine *g) {
+  stack_free(&g->stack);
+  struct node_base *to_free = g->gc_nodes;
+  struct node_base *next;
+
+  while (to_free) {
+    next = to_free->gc_next;
+    free_node_direct(to_free);
+    free(to_free);
+    to_free = next;
   }
 }
