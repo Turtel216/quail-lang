@@ -1,17 +1,10 @@
 type List = { Nil, Cons Int List }
 
-fun sumZip l m = {
+fun length l = {
     match l with {
         Nil -> { 0 }
-        Cons x xs -> {
-            match m with {
-                Nil -> { 0 }
-                Cons y ys -> { x + y + sumZip xs ys }
-            }
-        }
+        Cons x xs -> { 1 + length xs }
     }
 }
 
-fun ones = { Cons 1 ones }
-
-fun main = { sumZip ones (Cons 1 (Cons 2 (Cons 3 Nil))) }
+fun main = { length (Cons 1 (Cons 2 (Cons 3 Nil))) }

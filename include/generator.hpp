@@ -27,7 +27,9 @@ public: // TODO decide on encapsulation
   std::map<std::string, llvm::StructType *> structTypes;
 
   llvm::StructType *stackType;
+  llvm::StructType *gmachineType;
   llvm::PointerType *stackPointerType;
+  llvm::PointerType *gmachinePtrType;
   llvm::PointerType *nodePtrType;
   llvm::IntegerType *tagType;
   llvm::FunctionType *functionType;
@@ -53,6 +55,7 @@ public: // TODO decide on encapsulation
   void createSplit(llvm::Function *, llvm::Value *);
   void createSlide(llvm::Function *, llvm::Value *);
   void createAlloc(llvm::Function *, llvm::Value *);
+  void createUnwind(llvm::Function *);
   llvm::Value *createEval(llvm::Value *);
 
   llvm::Value *unwrapNum(llvm::Value *);

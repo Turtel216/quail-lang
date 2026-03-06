@@ -5,7 +5,9 @@ namespace ff {
 namespace cg {
 void CodeGenerator::createTypes() {
   this->stackType = llvm::StructType::create(this->ctx, "stack");
+  this->gmachineType = llvm::StructType::create(this->ctx, "gmachine");
   this->stackPointerType = llvm::PointerType::getUnqual(this->stackType);
+  this->stackPointerType = llvm::PointerType::getUnqual(this->gmachineType);
   this->tagType = llvm::IntegerType::getInt8Ty(this->ctx);
 
   this->structTypes["node_base"] =
@@ -142,6 +144,10 @@ void CodeGenerator::createFunctions() {
   this->functions["eval"] = llvm::Function::Create(
       llvm::FunctionType::get(this->nodePtrType, {this->nodePtrType}, false),
       llvm::Function::LinkageTypes::ExternalLinkage, "eval", &this->module);
+
+  this->functions["unwind"] = llvm::Function::Create(
+      llvm::FunctionType::get(voidType, {this->stackPointerType}, false),
+      llvm::Function::LinkageTypes::ExternalLinkage, "unwind", &this->module);
 }
 
 llvm::ConstantInt *CodeGenerator::createI8(std::int8_t i) {
@@ -266,6 +272,11 @@ llvm::Function *CodeGenerator::createCustomFunction(std::string name,
   this->customFunctions["f_" + name] = std::move(newCustome);
 
   return newFunction;
+}
+
+void CodeGenerator::createUnwind(llvm::Function *f) {
+  auto unwind = this->functions.at("unwind");
+  this->builder.CreateCall(unwind, {f->args().begin()});
 }
 
 } // namespace cg

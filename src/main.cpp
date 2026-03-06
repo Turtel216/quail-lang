@@ -86,6 +86,10 @@ void generateLLVMInternalOp(ff::cg::CodeGenerator &generator, binop op) {
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
   instructions.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Binop(op)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(2)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(2)));
 
   generator.builder.SetInsertPoint(&newFunction->getEntryBlock());
   for (auto &instruction : instructions) {

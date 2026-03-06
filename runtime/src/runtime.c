@@ -31,10 +31,6 @@ void print_node(struct node_base *n) {
 int main(int argc, char **argv) {
   struct node_global *first_node = alloc_global(f_main, 0);
   struct node_base *result = eval((struct node_base *)first_node);
-
-  printf("Result: ");
-  print_node(result);
-  putchar('\n');
 }
 
 void unwind(struct stack *s) {
@@ -70,6 +66,11 @@ struct node_base *eval(struct node_base *n) {
   unwind(&program_stack);
   struct node_base *result = stack_pop(&program_stack);
   stack_free(&program_stack);
+
+  printf("Result: ");
+  print_node(result);
+  putchar('\n');
+
   return result;
 }
 

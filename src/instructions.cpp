@@ -71,6 +71,11 @@ void Update::print(int indent, std::ostream &to) const {
   to << "Update(" << offset << ")" << std::endl;
 }
 
+void Pack::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
+  generator.createPack(f, generator.createSize(this->size),
+                       generator.createI8(this->tag));
+}
+
 void Pack::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
   to << "Pack(" << tag << ", " << size << ")" << std::endl;
@@ -164,7 +169,7 @@ void Binop::print(int indent, std::ostream &to) const {
 }
 
 void Eval::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
-  generator.createPush(f, generator.createEval(generator.createPop(f)));
+  generator.createUnwind(f);
 }
 
 void Eval::print(int indent, std::ostream &to) const {

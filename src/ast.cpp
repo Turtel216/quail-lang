@@ -448,10 +448,17 @@ void DefinitionData::generateLLVMFirst(ff::cg::CodeGenerator &generator) {
     auto newFunction = generator.createCustomFunction(
         constructor->name, constructor->types.size());
 
+    std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+    instructions.push_back(std::unique_ptr<ff::ir::Instruction>(
+        new ff::ir::Pack(constructor->tag, constructor->types.size())));
+
+    instructions.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(0)));
+
     generator.builder.SetInsertPoint(&newFunction->getEntryBlock());
-    generator.createPack(newFunction,
-                         generator.createSize(constructor->types.size()),
-                         generator.createI8(constructor->tag));
+    for (auto &instruction : instructions) {
+      instruction->generate(generator, newFunction);
+    }
     generator.builder.CreateRetVoid();
   }
 }
