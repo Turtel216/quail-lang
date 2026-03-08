@@ -1,22 +1,11 @@
 #include "../include/ast.hpp"
 #include "../include/cli.hpp"
+#include "../include/driver.hpp"
 #include "../include/error.hpp"
 #include "../include/types.hpp"
-#include "binop.hpp"
-#include "generator.hpp"
 #include "instructions.hpp"
 #include "parser.hpp"
 #include <cstdio>
-#include <llvm/IR/LegacyPassManager.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/MC/TargetRegistry.h>
-#include <llvm/Support/FileSystem.h>
-#include <llvm/Support/TargetSelect.h>
-#include <llvm/Support/raw_os_ostream.h>
-#include <llvm/Target/TargetMachine.h>
-#include <llvm/Target/TargetOptions.h>
-#include <llvm/TargetParser/Host.h>
-#include <optional>
 #include <stdexcept>
 
 extern FILE *yyin;
@@ -77,94 +66,6 @@ void compileProgram(const std::vector<std::unique_ptr<Definition>> &prog) {
   }
 }
 
-void generateLLVMInternalOp(ff::cg::CodeGenerator &generator, binop op) {
-  auto newFunction = generator.createCustomFunction(opAction(op), 2);
-
-  std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
-  instructions.push_back(
-      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Push(1)));
-  instructions.push_back(
-      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
-  instructions.push_back(
-      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Push(1)));
-  instructions.push_back(
-      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
-  instructions.push_back(
-      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Binop(op)));
-  instructions.push_back(
-      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(2)));
-  instructions.push_back(
-      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(2)));
-
-  generator.builder.SetInsertPoint(&newFunction->getEntryBlock());
-  for (auto &instruction : instructions) {
-    instruction->generate(generator, newFunction);
-  }
-
-  generator.builder.CreateRetVoid();
-}
-
-void outputLLVM(ff::cg::CodeGenerator &generator, const std::string &filename) {
-  llvm::Triple targetTriple(llvm::sys::getDefaultTargetTriple());
-
-  llvm::InitializeNativeTarget();
-  llvm::InitializeNativeTargetAsmParser();
-  llvm::InitializeNativeTargetAsmPrinter();
-
-  std::string error;
-  const llvm::Target *target =
-      llvm::TargetRegistry::lookupTarget(targetTriple, error);
-
-  if (!target) {
-    std::cerr << error << std::endl;
-  } else {
-    std::string cpu = "generic";
-    std::string features = "";
-    llvm::TargetOptions options;
-    llvm::TargetMachine *targetMachine =
-        target->createTargetMachine(targetTriple, cpu, features, options,
-                                    std::optional<llvm::Reloc::Model>());
-
-    generator.module.setDataLayout(targetMachine->createDataLayout());
-    generator.module.setTargetTriple(targetTriple);
-
-    std::error_code ec;
-    llvm::raw_fd_ostream file(filename, ec, llvm::sys::fs::OF_None);
-    if (ec) {
-      throw 0;
-    } else {
-      llvm::CodeGenFileType type = llvm::CodeGenFileType::ObjectFile;
-      llvm::legacy::PassManager pm;
-      if (targetMachine->addPassesToEmitFile(pm, file, NULL, type)) {
-        throw 0;
-      } else {
-        pm.run(generator.module);
-        file.close();
-      }
-    }
-  }
-}
-
-void generateLLVM(const std::vector<std::unique_ptr<Definition>> &prog,
-                  const std::string &output_file) {
-  ff::cg::CodeGenerator generator;
-  generateLLVMInternalOp(generator, PLUS);
-  generateLLVMInternalOp(generator, MINUS);
-  generateLLVMInternalOp(generator, TIMES);
-  generateLLVMInternalOp(generator, DIVIDE);
-
-  for (auto &definition : prog) {
-    definition->generateLLVMFirst(generator);
-  }
-
-  for (auto &defintion : prog) {
-    defintion->generateLLVMSecond(generator);
-  }
-
-  generator.module.print(llvm::outs(), nullptr);
-  outputLLVM(generator, output_file);
-}
-
 int main(int argc, char *argv[]) {
   yy::parser parser;
   ff::sem::TypeManager mgr;
@@ -201,7 +102,10 @@ int main(int argc, char *argv[]) {
 
     typecheckProgram(program, mgr, env);
     compileProgram(program);
-    generateLLVM(program, cli.output_file);
+    ff::drv::generateLLVM(program,
+                          "object.o"); // TODO: Fix hardcoded output file
+    ff::drv::linkToRuntime(cli.output_file);
+    ff::drv::cleanUp("object.o"); // TODO: Fix hardcoded output file
   } catch (ff::UnificationError &err) {
     std::cout << "failed to unify types: " << std::endl;
     std::cout << "  (1) \033[34m";

@@ -72,6 +72,7 @@ set(SRC_FILES
     src/enviroment.cpp
     src/generator.cpp
     src/cli.cpp
+    src/driver.cpp
 )
 
 # Main executable
