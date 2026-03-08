@@ -16,6 +16,8 @@ void yy::parser::error(const std::string &msg) {
 
 extern std::vector<std::unique_ptr<Definition>> program;
 
+constexpr std::string objectFile = "object.o";
+
 void typecheckProgram(const std::vector<std::unique_ptr<Definition>> &prog,
                       ff::sem::TypeManager &mgr, ff::sem::TypeContext &env) {
   std::shared_ptr<ff::sem::Type> int_type =
@@ -103,9 +105,9 @@ int main(int argc, char *argv[]) {
     typecheckProgram(program, mgr, env);
     compileProgram(program);
     ff::drv::generateLLVM(program,
-                          "object.o"); // TODO: Fix hardcoded output file
+                          objectFile); // TODO: Fix hardcoded output file
     ff::drv::linkToRuntime(cli.output_file);
-    ff::drv::cleanUp("object.o"); // TODO: Fix hardcoded output file
+    ff::drv::cleanUp(objectFile); // TODO: Fix hardcoded output file
   } catch (ff::UnificationError &err) {
     std::cout << "failed to unify types: " << std::endl;
     std::cout << "  (1) \033[34m";
