@@ -311,8 +311,8 @@ void PatternConstr::match(std::shared_ptr<ff::sem::Type> t,
     if (!arr)
       throw ff::TypeError("too many parameters in constructor pattern");
 
-    env.bind(params[i], arr->left);
-    constructor_type = arr->right;
+    env.bind(params[i], arr->getLeft());
+    constructor_type = arr->getRight();
   }
 
   mgr.unify(t, constructor_type);

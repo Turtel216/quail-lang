@@ -64,8 +64,8 @@ void TypeManager::unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r) {
     return;
   } else if ((larr = dynamic_cast<TypeArr *>(l.get())) &&
              (rarr = dynamic_cast<TypeArr *>(r.get()))) {
-    unify(larr->left, rarr->left);
-    unify(larr->right, rarr->right);
+    unify(larr->getLeft(), rarr->getLeft());
+    unify(larr->getRight(), rarr->getRight());
     return;
   } else if ((lid = dynamic_cast<TypeBase *>(l.get())) &&
              (rid = dynamic_cast<TypeBase *>(r.get()))) {

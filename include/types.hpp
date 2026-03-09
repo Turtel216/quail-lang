@@ -50,14 +50,21 @@ public:
 };
 
 class TypeArr : public Type {
-public:
+private:
   std::shared_ptr<Type> left;
   std::shared_ptr<Type> right;
 
+public:
   TypeArr(std::shared_ptr<Type> l, std::shared_ptr<Type> r)
       : left(std::move(l)), right(std::move(r)) {}
 
   void print(const TypeManager &mgr, std::ostream &to) const override;
+  inline const std::shared_ptr<Type> &getLeft() const noexcept {
+    return this->left;
+  }
+  inline const std::shared_ptr<Type> &getRight() const noexcept {
+    return this->right;
+  }
 };
 
 class TypeManager {
@@ -75,7 +82,7 @@ public:
   std::shared_ptr<Type> resolve(std::shared_ptr<Type> t, TypeVar *&var) const;
   void bind(const std::string &s, std::shared_ptr<Type> t);
 
-  int getLastId() const noexcept { return this->lastId; }
+  inline int getLastId() const noexcept { return this->lastId; }
 };
 } // namespace sem
 } // namespace ff
