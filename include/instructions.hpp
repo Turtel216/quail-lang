@@ -29,7 +29,7 @@ public:
 
   void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
-  int getValue() const noexcept { return this->value; }
+  inline int getValue() const noexcept { return this->value; }
 };
 
 class PushGlobal : public Instruction {
@@ -41,7 +41,7 @@ public:
 
   void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
-  std::string getName() const noexcept { return this->name; }
+  inline std::string getName() const noexcept { return this->name; }
 };
 
 class Push : public Instruction {
@@ -53,7 +53,7 @@ public:
 
   void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
-  int getOffset() const noexcept { return this->offset; }
+  inline int getOffset() const noexcept { return this->offset; }
 };
 
 class Pop : public Instruction {
@@ -65,7 +65,7 @@ public:
 
   void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
-  std::size_t getCount() const noexcept { return this->count; }
+  inline std::size_t getCount() const noexcept { return this->count; }
 };
 
 // Apply a function at the top of the stack to a value after it.
@@ -84,7 +84,7 @@ public:
 
   void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
-  int getOffset() const noexcept { return this->offset; }
+  inline int getOffset() const noexcept { return this->offset; }
 };
 
 class Pack : public Instruction {
@@ -97,8 +97,8 @@ public:
 
   void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
-  int getTag() const noexcept { return this->tag; }
-  std::size_t getSize() const noexcept { return this->size; }
+  inline int getTag() const noexcept { return this->tag; }
+  inline std::size_t getSize() const noexcept { return this->size; }
 };
 
 class Split : public Instruction {
@@ -113,6 +113,7 @@ public:
 
 // TODO: Determine private variable accesors and mutators
 class Jump : public Instruction {
+
 public:
   std::vector<std::vector<std::unique_ptr<Instruction>>> branches;
   std::map<int, int> tagMappings;
@@ -158,7 +159,7 @@ public:
 
   void generate(cg::CodeGenerator &, llvm::Function *) const override;
   void print(int indent, std::ostream &to) const override;
-  std::size_t getAmount() const noexcept { return this->amount; }
+  inline std::size_t getAmount() const noexcept { return this->amount; }
 };
 
 class Unwind : public Instruction {
