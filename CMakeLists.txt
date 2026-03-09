@@ -73,6 +73,7 @@ set(SRC_FILES
     src/generator.cpp
     src/cli.cpp
     src/driver.cpp
+    src/graph_function.cpp
 )
 
 # Main executable
