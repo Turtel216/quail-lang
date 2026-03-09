@@ -20,7 +20,7 @@ void PushInt::print(int indent, std::ostream &to) const {
 
 void PushGlobal::generate(cg::CodeGenerator &generator,
                           llvm::Function *f) const {
-  auto &global = generator.customFunctions.at("f_" + name);
+  auto &global = generator.getCustomeFunctions().at("f_" + name);
 
   auto arity = generator.createI32(global->arity);
   generator.createPush(f, generator.createGlobal(f, global->function, arity));

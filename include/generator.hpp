@@ -12,15 +12,11 @@
 namespace ff {
 namespace cg {
 class CodeGenerator {
-public: // TODO decide on encapsulation
+private:
   struct CustomFunction {
     llvm::Function *function;
     std::int32_t arity;
   };
-
-  llvm::LLVMContext ctx;
-  llvm::IRBuilder<> builder;
-  llvm::Module module;
 
   std::map<std::string, std::unique_ptr<CustomFunction>> customFunctions;
   std::map<std::string, llvm::Function *> functions;
@@ -34,10 +30,15 @@ public: // TODO decide on encapsulation
   llvm::IntegerType *tagType;
   llvm::FunctionType *functionType;
 
+public:
   CodeGenerator() : builder(ctx), module("ff", ctx) {
     this->createTypes();
     this->createFunctions();
   }
+
+  llvm::LLVMContext ctx;
+  llvm::IRBuilder<> builder;
+  llvm::Module module;
 
   void createTypes();
   void createFunctions();
@@ -69,6 +70,11 @@ public: // TODO decide on encapsulation
   llvm::Value *createApp(llvm::Function *, llvm::Value *, llvm::Value *);
 
   llvm::Function *createCustomFunction(std::string name, int32_t arity);
+
+  const inline std::map<std::string, std::unique_ptr<CustomFunction>> &
+  getCustomeFunctions() const noexcept {
+    return this->customFunctions;
+  }
 };
 } // namespace cg
 } // namespace ff
