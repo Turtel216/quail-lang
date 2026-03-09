@@ -40,7 +40,7 @@ void typecheckProgram(const std::vector<std::unique_ptr<Definition>> &prog,
     def->typeCheckSecond(mgr, env);
   }
 
-  for (auto &pair : env.names) {
+  for (auto &pair : env.getNames()) {
     std::cout << pair.first << ": ";
     pair.second->print(mgr, std::cout);
     std::cout << std::endl;
