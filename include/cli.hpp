@@ -9,7 +9,6 @@ class Cli {
 public:
   std::string source_file;
   std::string output_file = "a.out"; // Default output
-  bool compile_only = false;         // -c flag
   bool help_requested = false;
 
   Cli(int argc, char *argv[]);

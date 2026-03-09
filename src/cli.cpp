@@ -12,7 +12,6 @@ void Cli::print_usage(const char *prog_name) const {
   std::cout << "Usage: " << prog_name << " [source_file] [options]\n"
             << "Options:\n"
             << "  -o <path>      Specify the output file path\n"
-            << "  -c             Compile to object file only (do not link)\n"
             << "  --help         Display this information\n";
 }
 
@@ -31,8 +30,6 @@ void Cli::parse(int argc, char *argv[]) {
       } else {
         throw std::runtime_error("Error: -o requires an output path.");
       }
-    } else if (arg == "-c") {
-      compile_only = true;
     } else if (arg[0] == '-') {
       throw std::runtime_error("Unknown option: " + arg);
     } else {
