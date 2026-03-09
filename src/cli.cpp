@@ -1,4 +1,5 @@
 #include "../include/cli.hpp"
+#include "error.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -28,22 +29,22 @@ void Cli::parse(int argc, char *argv[]) {
       if (i + 1 < args.size()) {
         output_file = args[++i];
       } else {
-        throw std::runtime_error("Error: -o requires an output path.");
+        throw CliError("Error: -o requires an output path.");
       }
     } else if (arg[0] == '-') {
-      throw std::runtime_error("Unknown option: " + arg);
+      throw CliError("Unknown option: " + arg);
     } else {
       // If it doesn't start with '-', assume it's the source file
       if (source_file.empty()) {
         source_file = arg;
       } else {
-        throw std::runtime_error("Error: Multiple source files provided.");
+        throw CliError("Error: Multiple source files provided.");
       }
     }
   }
 
   if (source_file.empty() && !help_requested) {
-    throw std::runtime_error("Error: No input source file specified.");
+    throw CliError("Error: No input source file specified.");
   }
 }
 } // namespace drv

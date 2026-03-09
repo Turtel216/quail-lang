@@ -113,5 +113,56 @@ void cleanUp(const std::string &objectFile) {
   std::string command = "rm " + objectFile;
   std::system(command.c_str());
 }
+
+void typecheckProgram(const std::vector<std::unique_ptr<Definition>> &prog,
+                      ff::sem::TypeManager &mgr, ff::sem::TypeContext &env) {
+  std::shared_ptr<ff::sem::Type> int_type =
+      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
+  std::shared_ptr<ff::sem::Type> binop_type =
+      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(
+          int_type, std::shared_ptr<ff::sem::Type>(
+                        new ff::sem::TypeArr(int_type, int_type))));
+
+  env.bind("+", binop_type);
+  env.bind("-", binop_type);
+  env.bind("*", binop_type);
+  env.bind("/", binop_type);
+
+  for (auto &def : prog) {
+    def->typeCheckFirst(mgr, env);
+  }
+
+  for (auto &def : prog) {
+    def->typeCheckSecond(mgr, env);
+  }
+
+  for (auto &pair : env.getNames()) {
+    std::cout << pair.first << ": ";
+    pair.second->print(mgr, std::cout);
+    std::cout << std::endl;
+  }
+
+  for (auto &def : prog) {
+    def->resolve(mgr);
+  }
+}
+
+void compileProgram(const std::vector<std::unique_ptr<Definition>> &prog) {
+  for (auto &def : prog) {
+    def->generate();
+
+    DefinitionDefn *defn = dynamic_cast<DefinitionDefn *>(def.get());
+
+    if (!defn)
+      continue;
+
+    for (auto &instruction : defn->instructions) {
+      instruction->print(0, std::cout);
+    }
+
+    std::cout << std::endl;
+  }
+}
+
 } // namespace drv
 } // namespace ff

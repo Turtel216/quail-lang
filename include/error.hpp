@@ -24,4 +24,13 @@ public:
       : left(std::move(l)), right(std::move(r)),
         TypeError("failed to unify types") {}
 };
+
+class CliError : std::exception {
+public:
+  std::string description;
+
+  CliError(std::string _description) : description(std::move(_description)) {}
+
+  const char *what() const noexcept override;
+};
 } // namespace ff

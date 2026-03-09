@@ -18,56 +18,6 @@ extern std::vector<std::unique_ptr<Definition>> program;
 
 constexpr std::string objectFile = "object.o";
 
-void typecheckProgram(const std::vector<std::unique_ptr<Definition>> &prog,
-                      ff::sem::TypeManager &mgr, ff::sem::TypeContext &env) {
-  std::shared_ptr<ff::sem::Type> int_type =
-      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
-  std::shared_ptr<ff::sem::Type> binop_type =
-      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(
-          int_type, std::shared_ptr<ff::sem::Type>(
-                        new ff::sem::TypeArr(int_type, int_type))));
-
-  env.bind("+", binop_type);
-  env.bind("-", binop_type);
-  env.bind("*", binop_type);
-  env.bind("/", binop_type);
-
-  for (auto &def : prog) {
-    def->typeCheckFirst(mgr, env);
-  }
-
-  for (auto &def : prog) {
-    def->typeCheckSecond(mgr, env);
-  }
-
-  for (auto &pair : env.getNames()) {
-    std::cout << pair.first << ": ";
-    pair.second->print(mgr, std::cout);
-    std::cout << std::endl;
-  }
-
-  for (auto &def : prog) {
-    def->resolve(mgr);
-  }
-}
-
-void compileProgram(const std::vector<std::unique_ptr<Definition>> &prog) {
-  for (auto &def : prog) {
-    def->generate();
-
-    DefinitionDefn *defn = dynamic_cast<DefinitionDefn *>(def.get());
-
-    if (!defn)
-      continue;
-
-    for (auto &instruction : defn->instructions) {
-      instruction->print(0, std::cout);
-    }
-
-    std::cout << std::endl;
-  }
-}
-
 int main(int argc, char *argv[]) {
   yy::parser parser;
   ff::sem::TypeManager mgr;
@@ -102,8 +52,8 @@ int main(int argc, char *argv[]) {
       def->body->print(1, std::cout);
     }
 
-    typecheckProgram(program, mgr, env);
-    compileProgram(program);
+    ff::drv::typecheckProgram(program, mgr, env);
+    ff::drv::compileProgram(program);
     ff::drv::generateLLVM(program,
                           objectFile); // TODO: Fix hardcoded output file
     ff::drv::linkToRuntime(cli.output_file);
@@ -121,7 +71,7 @@ int main(int argc, char *argv[]) {
   } catch (ff::TypeError &err) {
     std::cout << "failed to type check program: " << err.description
               << std::endl;
-  } catch (std::runtime_error &err) {
+  } catch (ff::CliError &err) {
     std::cout << err.what();
   }
 }
