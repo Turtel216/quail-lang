@@ -1,8 +1,10 @@
 type Bool = { True, False }
+
 fun if c t e = {
     match c with {
         True -> { t }
         False -> { e }
     }
 }
+
 fun main = { if (if True False True) 11 3 }

@@ -19,6 +19,7 @@ public:
 
   std::shared_ptr<TypeScheme> lookup(const std::string &name) const;
   void bind(const std::string &name, std::shared_ptr<Type> t);
+  void bind(const std::string &name, std::shared_ptr<TypeScheme> t);
   std::shared_ptr<Type> lookupType(const std::string &name) const;
   void bindType(const std::string &typeName, std::shared_ptr<Type> t);
   void generalize(const std::string &name, TypeManager &mgr);

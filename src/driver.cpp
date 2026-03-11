@@ -100,6 +100,10 @@ void generateLLVM(
   }
 
   for (auto &defDefn : defsDefn) {
+    defDefn.second->declareLLVM(generator);
+  }
+
+  for (auto &defDefn : defsDefn) {
     defDefn.second->generateLLVM(generator);
   }
 

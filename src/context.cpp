@@ -35,6 +35,10 @@ void TypeContext::bind(const std::string &name, std::shared_ptr<Type> t) {
   this->names[name] = std::shared_ptr<TypeScheme>(new TypeScheme(t));
 }
 
+void TypeContext::bind(const std::string &name, std::shared_ptr<TypeScheme> t) {
+  names[name] = t;
+}
+
 std::shared_ptr<TypeContext> typeScope(std::shared_ptr<TypeContext> parent) {
   return std::shared_ptr<TypeContext>(new TypeContext(std::move(parent)));
 }

@@ -47,8 +47,11 @@ int main(int argc, char *argv[]) {
       defDefn.second->body->print(1, std::cout);
     }
 
+    std::cout << "Type checking\n";
     ff::drv::typecheckProgram(defs_data, defs_defn, mgr, typeContext);
+    std::cout << "Compiling\n";
     ff::drv::compileProgram(defs_defn);
+    std::cout << "LLVM\n";
     ff::drv::generateLLVM(defs_data, defs_defn,
                           objectFile); // TODO: Fix hardcoded output file
     ff::drv::linkToRuntime(cli.output_file);
