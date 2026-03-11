@@ -8,24 +8,22 @@
 #include "instructions.hpp"
 #include <llvm/IR/Function.h>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 class Ast {
 public:
-  std::shared_ptr<ff::sem::Type> nodeType;
+  std::shared_ptr<ff::sem::TypeContext> typeContext;
 
   virtual ~Ast() = default;
 
-  void commonResolve(const ff::sem::TypeManager &mgr);
-  virtual void resolve(const ff::sem::TypeManager &mgr) const = 0;
-
-  std::shared_ptr<ff::sem::Type>
-  commonTypecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeContext &context);
   virtual std::shared_ptr<ff::sem::Type>
-  typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeContext &env) const = 0;
+  typecheck(ff::sem::TypeManager &mgr) = 0;
+
+  virtual void findFree(ff::sem::TypeManager &mgr,
+                        std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                        std::set<std::string> &into) = 0;
 
   virtual void
   generate(const std::shared_ptr<ff::ir::Enviroment> &env,
@@ -38,11 +36,13 @@ class Pattern {
 public:
   virtual ~Pattern() = default;
 
-  virtual void match(std::shared_ptr<ff::sem::Type> t,
-                     ff::sem::TypeManager &mgr,
-                     ff::sem::TypeContext &env) const = 0;
-
   virtual void print(std::ostream &to) const = 0;
+  virtual void
+  insertBindings(ff::sem::TypeManager &mgr,
+                 std::shared_ptr<ff::sem::TypeContext> &typeCtx) const = 0;
+  virtual void
+  typecheck(std::shared_ptr<ff::sem::Type>, ff::sem::TypeManager &mgr,
+            std::shared_ptr<ff::sem::TypeContext> &typeCtx) const = 0;
 };
 
 class Branch {
@@ -64,38 +64,22 @@ public:
       : name(std::move(_name)), types(std::move(_types)) {}
 };
 
-class Definition {
-public:
-  virtual ~Definition() = default;
-
-  virtual void typeCheckFirst(ff::sem::TypeManager &mgr,
-                              ff::sem::TypeContext &env) = 0;
-  virtual void typeCheckSecond(ff::sem::TypeManager &mgr,
-                               const ff::sem::TypeContext &env) const = 0;
-
-  virtual void resolve(const ff::sem::TypeManager &mgr) = 0;
-
-  virtual void generate() = 0;
-
-  virtual void generateLLVMFirst(ff::cg::CodeGenerator &generator) = 0;
-  virtual void generateLLVMSecond(ff::cg::CodeGenerator &generator) = 0;
-};
-
 class AstInt : public Ast {
 public:
   int value;
 
   explicit AstInt(int v) : value(v) {}
 
-  std::shared_ptr<ff::sem::Type>
-  typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeContext &env) const override;
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
-  void resolve(const ff::sem::TypeManager &mgr) const override;
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
 
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -105,15 +89,16 @@ public:
 
   explicit AstLid(std::string i) : id(std::move(i)) {}
 
-  std::shared_ptr<ff::sem::Type>
-  typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeContext &env) const override;
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
-  void resolve(const ff::sem::TypeManager &mgr) const override;
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
 
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -123,11 +108,11 @@ public:
 
   explicit AstUid(std::string i) : id(std::move(i)) {}
 
-  std::shared_ptr<ff::sem::Type>
-  typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeContext &env) const override;
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
-  void resolve(const ff::sem::TypeManager &mgr) const override;
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
 
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
@@ -144,11 +129,11 @@ public:
   AstBinop(binop _op, std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs)
       : op(_op), left(std::move(lhs)), right(std::move(rhs)) {}
 
-  std::shared_ptr<ff::sem::Type>
-  typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeContext &env) const override;
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
-  void resolve(const ff::sem::TypeManager &mgr) const override;
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
 
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
@@ -165,11 +150,11 @@ public:
   AstApp(std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs)
       : left(std::move(lhs)), right(std::move(rhs)) {}
 
-  std::shared_ptr<ff::sem::Type>
-  typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeContext &env) const override;
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
-  void resolve(const ff::sem::TypeManager &mgr) const override;
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
 
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
@@ -181,20 +166,22 @@ class AstCase : public Ast {
 public:
   std::unique_ptr<Ast> of;
   std::vector<std::unique_ptr<Branch>> branches;
+  std::shared_ptr<ff::sem::Type> inputType;
 
   AstCase(std::unique_ptr<Ast> _of,
           std::vector<std::unique_ptr<Branch>> _branches)
       : of(std::move(_of)), branches(std::move(_branches)) {}
 
-  std::shared_ptr<ff::sem::Type>
-  typecheck(ff::sem::TypeManager &mgr,
-            const ff::sem::TypeContext &env) const override;
-
-  void resolve(const ff::sem::TypeManager &mgr) const override;
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
 };
 
@@ -204,8 +191,12 @@ public:
 
   PatternVar(std::string _var) : var(std::move(_var)) {}
 
-  void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
-             ff::sem::TypeContext &env) const override;
+  void
+  insertBindings(ff::sem::TypeManager &mgr,
+                 std::shared_ptr<ff::sem::TypeContext> &typeCtx) const override;
+
+  void typecheck(std::shared_ptr<ff::sem::Type>, ff::sem::TypeManager &mgr,
+                 std::shared_ptr<ff::sem::TypeContext> &typeCtx) const override;
 
   void print(std::ostream &to) const override;
 };
@@ -218,61 +209,57 @@ public:
   PatternConstr(std::string c, std::vector<std::string> p)
       : constr(std::move(c)), params(std::move(p)) {}
 
-  void match(std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
-             ff::sem::TypeContext &env) const override;
+  void
+  insertBindings(ff::sem::TypeManager &mgr,
+                 std::shared_ptr<ff::sem::TypeContext> &typeCtx) const override;
+
+  void typecheck(std::shared_ptr<ff::sem::Type>, ff::sem::TypeManager &mgr,
+                 std::shared_ptr<ff::sem::TypeContext> &typeCtx) const override;
 
   void print(std::ostream &to) const override;
 };
 
-class DefinitionDefn : public Definition {
-public:
+class DefinitionDefn {
+public: // TODO: Fix encapsulation
   std::string name;
   std::vector<std::string> params;
   std::unique_ptr<Ast> body;
 
-  // Types
+  std::shared_ptr<ff::sem::TypeContext> typeContext;
+  std::shared_ptr<ff::sem::TypeContext> varContext;
+  std::set<std::string> freeVariables;
+  std::shared_ptr<ff::sem::Type> fullType;
   std::shared_ptr<ff::sem::Type> returnType;
-  std::vector<std::shared_ptr<ff::sem::Type>> paramTypes;
 
   std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
 
   llvm::Function *generatedFunction;
 
-  DefinitionDefn(std::string _name, std::vector<std::string> _params,
-                 std::unique_ptr<Ast> _body)
-      : name(std::move(_name)), params(std::move(_params)),
-        body(std::move(_body)) {}
+  DefinitionDefn(std::string n, std::vector<std::string> p,
+                 std::unique_ptr<Ast> b)
+      : name(std::move(n)), params(std::move(p)), body(std::move(b)) {}
 
-  void typeCheckFirst(ff::sem::TypeManager &mgr,
-                      ff::sem::TypeContext &env) override;
-  void typeCheckSecond(ff::sem::TypeManager &mgr,
-                       const ff::sem::TypeContext &env) const override;
-
-  void resolve(const ff::sem::TypeManager &mgr) override;
-  void generate() override;
-
-  virtual void generateLLVMFirst(ff::cg::CodeGenerator &generator) override;
-  virtual void generateLLVMSecond(ff::cg::CodeGenerator &generator) override;
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx);
+  void insertTypes(ff::sem::TypeManager &mgr);
+  void typecheck(ff::sem::TypeManager &mgr);
+  void compile();
+  void declareLLVM(ff::cg::CodeGenerator &generator);
+  void generateLLVM(ff::cg::CodeGenerator &generator);
 };
 
-class DefinitionData : public Definition {
+class DefinitionData {
 public:
   std::string name;
   std::vector<std::unique_ptr<Constructor>> constructors;
 
-  DefinitionData(std::string _name,
-                 std::vector<std::unique_ptr<Constructor>> _constructors)
-      : name(std::move(_name)), constructors(std::move(_constructors)) {}
+  std::shared_ptr<ff::sem::TypeContext> typeContext;
 
-  void typeCheckFirst(ff::sem::TypeManager &mgr,
-                      ff::sem::TypeContext &env) override;
-  void typeCheckSecond(ff::sem::TypeManager &mgr,
-                       const ff::sem::TypeContext &env) const override;
+  DefinitionData(std::string n, std::vector<std::unique_ptr<Constructor>> cs)
+      : name(std::move(n)), constructors(std::move(cs)) {}
 
-  void resolve(const ff::sem::TypeManager &mgr) override;
-
-  void generate() override;
-
-  virtual void generateLLVMFirst(ff::cg::CodeGenerator &generator) override;
-  virtual void generateLLVMSecond(ff::cg::CodeGenerator &generator) override;
+  void insertTypes(ff::sem::TypeManager &mgr,
+                   std::shared_ptr<ff::sem::TypeContext> &typeCtx);
+  void insertConstructors() const;
+  void generateLLVM(ff::cg::CodeGenerator &generator);
 };

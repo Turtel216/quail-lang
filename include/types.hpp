@@ -2,6 +2,8 @@
 
 #include <map>
 #include <memory>
+#include <set>
+#include <vector>
 
 namespace ff {
 namespace sem {
@@ -81,8 +83,21 @@ public:
   void unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r);
   std::shared_ptr<Type> resolve(std::shared_ptr<Type> t, TypeVar *&var) const;
   void bind(const std::string &s, std::shared_ptr<Type> t);
+  void findFree(const std::shared_ptr<Type> &t,
+                std::set<std::string> &into) const;
 
   inline int getLastId() const noexcept { return this->lastId; }
+};
+
+class TypeScheme {
+public:
+  std::vector<std::string> forall;
+  std::shared_ptr<Type> monotype;
+
+  TypeScheme(std::shared_ptr<Type> t) : forall(), monotype(std::move(t)) {}
+
+  void print(const TypeManager &mgr, std::ostream &to) const;
+  std::shared_ptr<Type> instantiate(TypeManager &mgr) const;
 };
 } // namespace sem
 } // namespace ff

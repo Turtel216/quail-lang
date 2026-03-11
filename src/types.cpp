@@ -19,6 +19,27 @@ std::string TypeManager::newTypeName() noexcept {
   return str;
 }
 
+std::shared_ptr<Type>
+substitute(const TypeManager &mgr,
+           const std::map<std::string, std::shared_ptr<Type>> &subst,
+           const std::shared_ptr<Type> &t) {
+  TypeVar *var;
+  auto resolved = mgr.resolve(t, var);
+  if (var) {
+    auto subst_it = subst.find(var->getName());
+    if (subst_it == subst.end())
+      return resolved;
+    return subst_it->second;
+  } else if (TypeArr *arr = dynamic_cast<TypeArr *>(t.get())) {
+    auto left_result = substitute(mgr, subst, arr->getLeft());
+    auto right_result = substitute(mgr, subst, arr->getRight());
+    if (left_result == arr->getLeft() && right_result == arr->getRight())
+      return t;
+    return std::shared_ptr<Type>(new TypeArr(left_result, right_result));
+  }
+  return t;
+}
+
 std::shared_ptr<Type> TypeManager::newType() noexcept {
   return std::shared_ptr<Type>(new TypeVar(newTypeName()));
 }
@@ -84,6 +105,29 @@ void TypeManager::bind(const std::string &s, std::shared_ptr<Type> t) {
   types[s] = t;
 }
 
+std::shared_ptr<Type> TypeScheme::instantiate(TypeManager &mgr) const {
+  if (forall.size() == 0)
+    return monotype;
+
+  std::map<std::string, std::shared_ptr<Type>> subst;
+  for (auto &var : forall) {
+    subst[var] = mgr.newType();
+  }
+
+  return substitute(mgr, subst, monotype);
+}
+
+void TypeScheme::print(const TypeManager &mgr, std::ostream &to) const {
+  if (forall.size() != 0) {
+    to << "forall ";
+    for (auto &var : forall) {
+      to << var << " ";
+    }
+    to << ". ";
+  }
+  monotype->print(mgr, to);
+}
+
 void TypeVar::print(const TypeManager &mgr, std::ostream &to) const {
   auto it = mgr.types.find(this->name);
   if (it != mgr.types.end()) {
@@ -102,6 +146,19 @@ void TypeArr::print(const TypeManager &mgr, std::ostream &to) const {
   to << " -> (";
   right->print(mgr, to);
   to << ")";
+}
+
+void TypeManager::findFree(const std::shared_ptr<Type> &t,
+                           std::set<std::string> &into) const {
+  TypeVar *var;
+  auto resolved = resolve(t, var);
+
+  if (var) {
+    into.insert(var->getName());
+  } else if (TypeArr *arr = dynamic_cast<TypeArr *>(resolved.get())) {
+    findFree(arr->getLeft(), into);
+    findFree(arr->getRight(), into);
+  }
 }
 
 } // namespace sem

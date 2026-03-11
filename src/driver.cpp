@@ -1,5 +1,6 @@
 #include "../include/driver.hpp"
 #include "../include/binop.hpp"
+#include "graph_function.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <llvm/IR/LegacyPassManager.h>
@@ -84,24 +85,26 @@ void outputLLVM(ff::cg::CodeGenerator &generator,
   }
 }
 
-void generateLLVM(const std::vector<std::unique_ptr<Definition>> &prog,
-                  const std::string &objectFile) {
+void generateLLVM(
+    const std::map<std::string, std::unique_ptr<DefinitionData>> &defsData,
+    const std::map<std::string, std::unique_ptr<DefinitionDefn>> &defsDefn,
+    const std::string &output_file) {
   ff::cg::CodeGenerator generator;
   generateLLVMInternalOp(generator, PLUS);
   generateLLVMInternalOp(generator, MINUS);
   generateLLVMInternalOp(generator, TIMES);
   generateLLVMInternalOp(generator, DIVIDE);
 
-  for (auto &definition : prog) {
-    definition->generateLLVMFirst(generator);
+  for (auto &defData : defsData) {
+    defData.second->generateLLVM(generator);
   }
 
-  for (auto &defintion : prog) {
-    defintion->generateLLVMSecond(generator);
+  for (auto &defDefn : defsDefn) {
+    defDefn.second->generateLLVM(generator);
   }
 
   generator.module.print(llvm::outs(), nullptr);
-  outputLLVM(generator, objectFile);
+  outputLLVM(generator, output_file);
 }
 
 void linkToRuntime(const std::string &output) {
@@ -114,49 +117,77 @@ void cleanUp(const std::string &objectFile) {
   std::system(command.c_str());
 }
 
-void typecheckProgram(const std::vector<std::unique_ptr<Definition>> &prog,
-                      ff::sem::TypeManager &mgr, ff::sem::TypeContext &env) {
-  std::shared_ptr<ff::sem::Type> int_type =
-      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
-  std::shared_ptr<ff::sem::Type> binop_type =
-      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(
-          int_type, std::shared_ptr<ff::sem::Type>(
-                        new ff::sem::TypeArr(int_type, int_type))));
+void typecheckProgram(
+    const std::map<std::string, std::unique_ptr<DefinitionData>> &defsData,
+    const std::map<std::string, std::unique_ptr<DefinitionDefn>> &defsDefn,
+    ff::sem::TypeManager &mgr,
+    std::shared_ptr<ff::sem::TypeContext> &typeContext) {
+  auto intType = std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
+  typeContext->bindType("Int", intType);
 
-  env.bind("+", binop_type);
-  env.bind("-", binop_type);
-  env.bind("*", binop_type);
-  env.bind("/", binop_type);
+  auto binopType = std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(
+      intType,
+      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(intType, intType))));
 
-  for (auto &def : prog) {
-    def->typeCheckFirst(mgr, env);
+  typeContext->bind("+", binopType);
+  typeContext->bind("-", binopType);
+  typeContext->bind("*", binopType);
+  typeContext->bind("/", binopType);
+
+  for (auto &defData : defsData) {
+    defData.second->insertTypes(mgr, typeContext);
+  }
+  for (auto &defData : defsData) {
+    defData.second->insertConstructors();
   }
 
-  for (auto &def : prog) {
-    def->typeCheckSecond(mgr, env);
+  ff::sem::FunctionGraph dependencyGraph;
+
+  for (auto &defDefn : defsDefn) {
+    defDefn.second->findFree(mgr, typeContext);
+    dependencyGraph.addFunction(defDefn.second->name);
+
+    for (auto &dependency : defDefn.second->freeVariables) {
+      if (defsDefn.find(dependency) == defsDefn.end())
+        throw 0;
+
+      dependencyGraph.addEdge(defDefn.second->name, dependency);
+    }
   }
 
-  for (auto &pair : env.getNames()) {
+  std::vector<std::unique_ptr<ff::sem::Group>> groups =
+      dependencyGraph.computeOrder();
+
+  for (auto it = groups.rbegin(); it != groups.rend(); it++) {
+    auto &group = *it;
+    for (auto &defDefnName : group->members) {
+      auto &defDefn = defsDefn.find(defDefnName)->second;
+      defDefn->insertTypes(mgr);
+    }
+
+    for (auto &defDefnName : group->members) {
+      auto &defDefn = defsDefn.find(defDefnName)->second;
+      defDefn->typecheck(mgr);
+    }
+
+    for (auto &def_defnn_name : group->members) {
+      typeContext->generalize(def_defnn_name, mgr);
+    }
+  }
+
+  for (auto &pair : typeContext->getNames()) {
     std::cout << pair.first << ": ";
     pair.second->print(mgr, std::cout);
     std::cout << std::endl;
   }
-
-  for (auto &def : prog) {
-    def->resolve(mgr);
-  }
 }
 
-void compileProgram(const std::vector<std::unique_ptr<Definition>> &prog) {
-  for (auto &def : prog) {
-    def->generate();
+void compileProgram(
+    const std::map<std::string, std::unique_ptr<DefinitionDefn>> &defsDefn) {
+  for (auto &defDefn : defsDefn) {
+    defDefn.second->compile();
 
-    DefinitionDefn *defn = dynamic_cast<DefinitionDefn *>(def.get());
-
-    if (!defn)
-      continue;
-
-    for (auto &instruction : defn->instructions) {
+    for (auto &instruction : defDefn.second->instructions) {
       instruction->print(0, std::cout);
     }
 

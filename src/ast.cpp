@@ -1,6 +1,7 @@
 #include "../include/ast.hpp"
 
-#include "ast.hpp"
+#include "../include/types.hpp"
+#include "context.hpp"
 #include "enviroment.hpp"
 #include "error.hpp"
 #include "instructions.hpp"
@@ -14,36 +15,22 @@ void printIndent(int n, std::ostream &to) {
 
 // ############ Asts ############
 
-std::shared_ptr<ff::sem::Type>
-Ast::commonTypecheck(ff::sem::TypeManager &mgr,
-                     const ff::sem::TypeContext &context) {
-  this->nodeType = this->typecheck(mgr, context);
-  return this->nodeType;
+void AstInt::findFree(ff::sem::TypeManager &mgr,
+                      std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                      std::set<std::string> &into) {
+  this->typeContext = typeCtx;
 }
 
-void Ast::commonResolve(const ff::sem::TypeManager &mgr) {
-  ff::sem::TypeVar *var;
-  auto resolvedType = mgr.resolve(this->nodeType, var);
-
-  if (var)
-    throw ff::TypeError("ambiguous typed program");
-
-  this->resolve(mgr);
-  this->nodeType = std::move(resolvedType);
-}
-
-void AstInt::resolve(const ff::sem::TypeManager &mgr) const {
-  // TODO
-}
-
-std::shared_ptr<ff::sem::Type>
-AstInt::typecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeContext &env) const {
+std::shared_ptr<ff::sem::Type> AstInt::typecheck(ff::sem::TypeManager &mgr) {
   return std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
 }
 
-void AstLid::resolve(const ff::sem::TypeManager &mgr) const {
-  // TODO
+void AstLid::findFree(ff::sem::TypeManager &mgr,
+                      std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                      std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+  if (typeCtx->lookup(id) == nullptr)
+    into.insert(id);
 }
 
 void AstInt::generate(
@@ -58,10 +45,8 @@ void AstInt::print(int indent, std::ostream &to) const {
   to << "INT: " << value << std::endl;
 }
 
-std::shared_ptr<ff::sem::Type>
-AstLid::typecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeContext &env) const {
-  return env.lookup(id);
+std::shared_ptr<ff::sem::Type> AstLid::typecheck(ff::sem::TypeManager &mgr) {
+  return typeContext->lookup(id)->instantiate(mgr);
 }
 
 void AstLid::generate(
@@ -78,14 +63,14 @@ void AstLid::print(int indent, std::ostream &to) const {
   to << "INT: " << id << std::endl;
 }
 
-std::shared_ptr<ff::sem::Type>
-AstUid::typecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeContext &env) const {
-  return env.lookup(id);
+std::shared_ptr<ff::sem::Type> AstUid::typecheck(ff::sem::TypeManager &mgr) {
+  return typeContext->lookup(id)->instantiate(mgr);
 }
 
-void AstUid::resolve(const ff::sem::TypeManager &mgr) const {
-  // TODO
+void AstUid::findFree(ff::sem::TypeManager &mgr,
+                      std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                      std::set<std::string> &into) {
+  this->typeContext = typeCtx;
 }
 
 void AstUid::generate(
@@ -100,28 +85,29 @@ void AstUid::print(int indent, std::ostream &to) const {
   to << "INT: " << id << std::endl;
 }
 
-std::shared_ptr<ff::sem::Type>
-AstBinop::typecheck(ff::sem::TypeManager &mgr,
-                    const ff::sem::TypeContext &env) const {
-  std::shared_ptr<ff::sem::Type> ltype = left->commonTypecheck(mgr, env);
-  std::shared_ptr<ff::sem::Type> rtype = right->commonTypecheck(mgr, env);
-  std::shared_ptr<ff::sem::Type> ftype = env.lookup(opName(op));
+std::shared_ptr<ff::sem::Type> AstBinop::typecheck(ff::sem::TypeManager &mgr) {
+  auto ltype = left->typecheck(mgr);
+  auto rtype = right->typecheck(mgr);
+  auto ftype = typeContext->lookup(opName(op))->instantiate(mgr);
   if (!ftype)
     throw ff::TypeError(std::string("unknown binary operator ") + opName(op));
 
-  std::shared_ptr<ff::sem::Type> return_type = mgr.newType();
-  std::shared_ptr<ff::sem::Type> arrow_one =
+  auto return_type = mgr.newType();
+  auto arrow_one =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(rtype, return_type));
-  std::shared_ptr<ff::sem::Type> arrow_two =
+  auto arrow_two =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(ltype, arrow_one));
 
   mgr.unify(arrow_two, ftype);
   return return_type;
 }
 
-void AstBinop::resolve(const ff::sem::TypeManager &mgr) const {
-  left->commonResolve(mgr);
-  right->commonResolve(mgr);
+void AstBinop::findFree(ff::sem::TypeManager &mgr,
+                        std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                        std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+  left->findFree(mgr, typeCtx, into);
+  right->findFree(mgr, typeCtx, into);
 }
 
 void AstBinop::generate(
@@ -145,22 +131,23 @@ void AstBinop::print(int indent, std::ostream &to) const {
   right->print(indent + 1, to);
 }
 
-std::shared_ptr<ff::sem::Type>
-AstApp::typecheck(ff::sem::TypeManager &mgr,
-                  const ff::sem::TypeContext &env) const {
-  std::shared_ptr<ff::sem::Type> ltype = left->commonTypecheck(mgr, env);
-  std::shared_ptr<ff::sem::Type> rtype = right->commonTypecheck(mgr, env);
+std::shared_ptr<ff::sem::Type> AstApp::typecheck(ff::sem::TypeManager &mgr) {
+  auto ltype = left->typecheck(mgr);
+  auto rtype = right->typecheck(mgr);
 
-  std::shared_ptr<ff::sem::Type> return_type = mgr.newType();
-  std::shared_ptr<ff::sem::Type> arrow =
+  auto return_type = mgr.newType();
+  auto arrow =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(rtype, return_type));
   mgr.unify(arrow, ltype);
   return return_type;
 }
 
-void AstApp::resolve(const ff::sem::TypeManager &mgr) const {
-  left->commonResolve(mgr);
-  right->commonResolve(mgr);
+void AstApp::findFree(ff::sem::TypeManager &mgr,
+                      std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                      std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+  left->findFree(mgr, typeCtx, into);
+  right->findFree(mgr, typeCtx, into);
 }
 
 void AstApp::generate(
@@ -181,33 +168,31 @@ void AstApp::print(int indent, std::ostream &to) const {
   right->print(indent + 1, to);
 }
 
-void AstCase::resolve(const ff::sem::TypeManager &mgr) const {
-  of->commonResolve(mgr);
+void AstCase::findFree(ff::sem::TypeManager &mgr,
+                       std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                       std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+  of->findFree(mgr, typeCtx, into);
   for (auto &branch : branches) {
-    branch->expr->commonResolve(mgr);
+    auto newEnv = ff::sem::typeScope(typeCtx);
+    branch->pattern->insertBindings(mgr, newEnv);
+    branch->expr->findFree(mgr, newEnv, into);
   }
 }
 
-std::shared_ptr<ff::sem::Type>
-AstCase::typecheck(ff::sem::TypeManager &mgr,
-                   const ff::sem::TypeContext &env) const {
+std::shared_ptr<ff::sem::Type> AstCase::typecheck(ff::sem::TypeManager &mgr) {
   ff::sem::TypeVar *var;
-  std::shared_ptr<ff::sem::Type> case_type =
-      mgr.resolve(of->commonTypecheck(mgr, env), var);
-  std::shared_ptr<ff::sem::Type> branch_type = mgr.newType();
+  auto case_type = mgr.resolve(of->typecheck(mgr), var);
+  auto branch_type = mgr.newType();
 
   for (auto &branch : branches) {
-    ff::sem::TypeContext new_env = env.scope();
-
-    branch->pattern->match(case_type, mgr, new_env);
-    std::shared_ptr<ff::sem::Type> curr_branch_type =
-        branch->expr->typecheck(mgr, new_env);
-
+    branch->pattern->typecheck(case_type, mgr, branch->expr->typeContext);
+    auto curr_branch_type = branch->expr->typecheck(mgr);
     mgr.unify(branch_type, curr_branch_type);
   }
 
-  case_type = mgr.resolve(case_type, var);
-  if (!dynamic_cast<ff::sem::TypeBase *>(case_type.get())) {
+  this->inputType = mgr.resolve(case_type, var);
+  if (!dynamic_cast<ff::sem::TypeData *>(inputType.get())) {
     throw ff::TypeError("attempting case analysis of non-data type");
   }
 
@@ -217,8 +202,7 @@ AstCase::typecheck(ff::sem::TypeManager &mgr,
 void AstCase::generate(
     const std::shared_ptr<ff::ir::Enviroment> &env,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
-  ff::sem::TypeData *type =
-      dynamic_cast<ff::sem::TypeData *>(of->nodeType.get());
+  ff::sem::TypeData *type = dynamic_cast<ff::sem::TypeData *>(inputType.get());
 
   of->generate(env, into);
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
@@ -289,33 +273,49 @@ void AstCase::print(int indent, std::ostream &to) const {
   }
 }
 
-void PatternVar::match(std::shared_ptr<ff::sem::Type> t,
-                       ff::sem::TypeManager &mgr,
-                       ff::sem::TypeContext &env) const {
-  env.bind(var, t);
-}
-
 void PatternVar::print(std::ostream &to) const { to << var; }
 
-void PatternConstr::match(std::shared_ptr<ff::sem::Type> t,
-                          ff::sem::TypeManager &mgr,
-                          ff::sem::TypeContext &env) const {
-  std::shared_ptr<ff::sem::Type> constructor_type = env.lookup(constr);
-  if (!constructor_type)
+void PatternVar::insertBindings(
+    ff::sem::TypeManager &mgr,
+    std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
+  typeCtx->bind(var, mgr.newType());
+}
+
+void PatternVar::typecheck(
+    std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
+    std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
+  mgr.unify(typeCtx->lookup(var)->instantiate(mgr), t);
+}
+
+void PatternConstr::typecheck(
+    std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
+    std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
+  auto constructorType = typeCtx->lookup(constr)->instantiate(mgr);
+  if (!constructorType) {
     throw ff::TypeError(std::string("pattern using unknown constructor ") +
                         constr);
+  }
 
-  for (int i = 0; i < params.size(); i++) {
+  for (auto &param : params) {
     ff::sem::TypeArr *arr =
-        dynamic_cast<ff::sem::TypeArr *>(constructor_type.get());
+        dynamic_cast<ff::sem::TypeArr *>(constructorType.get());
+
     if (!arr)
       throw ff::TypeError("too many parameters in constructor pattern");
 
-    env.bind(params[i], arr->getLeft());
-    constructor_type = arr->getRight();
+    mgr.unify(typeCtx->lookup(param)->instantiate(mgr), arr->getLeft());
+    constructorType = arr->getRight();
   }
 
-  mgr.unify(t, constructor_type);
+  mgr.unify(t, constructorType);
+}
+
+void PatternConstr::insertBindings(
+    ff::sem::TypeManager &mgr,
+    std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
+  for (auto &param : this->params) {
+    typeCtx->bind(param, mgr.newType());
+  }
 }
 
 void PatternConstr::print(std::ostream &to) const {
@@ -327,128 +327,98 @@ void PatternConstr::print(std::ostream &to) const {
 
 // ############ Definitions ############
 
-void DefinitionDefn::typeCheckFirst(ff::sem::TypeManager &mgr,
-                                    ff::sem::TypeContext &env) {
-  this->returnType = mgr.newType();
-  std::shared_ptr<ff::sem::Type> fullType = this->returnType;
+void DefinitionDefn::findFree(ff::sem::TypeManager &mgr,
+                              std::shared_ptr<ff::sem::TypeContext> &typeCtx) {
+  this->typeContext = typeCtx;
 
-  for (auto it = this->params.rbegin(); it != this->params.rend(); it++) {
-    std::shared_ptr<ff::sem::Type> paramType = mgr.newType();
+  varContext = ff::sem::typeScope(typeCtx);
+  returnType = mgr.newType();
+  fullType = returnType;
+
+  for (auto it = params.rbegin(); it != params.rend(); it++) {
+    auto paramType = mgr.newType();
     fullType = std::shared_ptr<ff::sem::Type>(
         new ff::sem::TypeArr(paramType, fullType));
-    this->paramTypes.push_back(paramType);
+    varContext->bind(*it, paramType);
   }
 
-  env.bind(name, fullType);
+  body->findFree(mgr, varContext, freeVariables);
 }
 
-void DefinitionDefn::typeCheckSecond(ff::sem::TypeManager &mgr,
-                                     const ff::sem::TypeContext &env) const {
-  ff::sem::TypeContext newEnv = env.scope();
-  auto param_it = this->params.begin();
-  auto type_it = this->paramTypes.rbegin();
-
-  while (param_it != params.end() && type_it != this->paramTypes.rend()) {
-    newEnv.bind(*param_it, *type_it);
-    param_it++;
-    type_it++;
-  }
-
-  std::shared_ptr<ff::sem::Type> body_type = body->commonTypecheck(mgr, newEnv);
-  mgr.unify(this->returnType, body_type);
+void DefinitionDefn::insertTypes(ff::sem::TypeManager &mgr) {
+  typeContext->bind(name, fullType);
 }
 
-void DefinitionData::typeCheckFirst(ff::sem::TypeManager &mgr,
-                                    ff::sem::TypeContext &env) {
-  ff::sem::TypeData *this_type = new ff::sem::TypeData(name);
-  std::shared_ptr<ff::sem::Type> return_type =
-      std::shared_ptr<ff::sem::Type>(this_type);
-  int next_tag = 0;
-
-  for (auto &constructor : constructors) {
-    constructor->tag = next_tag;
-    this_type->constructors[constructor->name] = {next_tag++};
-
-    std::shared_ptr<ff::sem::Type> full_type = return_type;
-
-    for (auto it = constructor->types.rbegin(); it != constructor->types.rend();
-         it++) {
-      std::shared_ptr<ff::sem::Type> type =
-          std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase(*it));
-      full_type =
-          std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(type, full_type));
-    }
-
-    env.bind(constructor->name, full_type);
-  }
+void DefinitionDefn::typecheck(ff::sem::TypeManager &mgr) {
+  auto bodyType = body->typecheck(mgr);
+  mgr.unify(returnType, bodyType);
 }
 
-void DefinitionDefn::resolve(const ff::sem::TypeManager &mgr) {
-  ff::sem::TypeVar *var;
-  body->commonResolve(mgr);
-
-  this->returnType = mgr.resolve(this->returnType, var);
-
-  if (var)
-    throw ff::TypeError("ambiguously typed program");
-
-  for (auto &paramType : this->paramTypes) {
-    paramType = mgr.resolve(paramType, var);
-
-    if (var)
-      throw ff::TypeError("ambiguously typed program");
-  }
-}
-
-void DefinitionDefn::generate() {
-  auto new_env = std::shared_ptr<ff::ir::Enviroment>(
+void DefinitionDefn::compile() {
+  auto newEnv = std::shared_ptr<ff::ir::Enviroment>(
       new ff::ir::EnviromentOffset(0, nullptr));
 
   for (auto it = params.rbegin(); it != params.rend(); it++) {
-    new_env = std::shared_ptr<ff::ir::Enviroment>(
-        new ff::ir::EnviromentVar(*it, new_env));
+    newEnv = std::shared_ptr<ff::ir::Enviroment>(
+        new ff::ir::EnviromentVar(*it, newEnv));
   }
-
-  body->generate(new_env, this->instructions);
-  this->instructions.push_back(
+  body->generate(newEnv, instructions);
+  instructions.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(params.size())));
-  this->instructions.push_back(
+  instructions.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(params.size())));
 }
 
-void DefinitionDefn::generateLLVMFirst(ff::cg::CodeGenerator &generator) {
-  this->generatedFunction =
-      generator.createCustomFunction(this->name, this->params.size());
+void DefinitionDefn::declareLLVM(ff::cg::CodeGenerator &generator) {
+  generatedFunction = generator.createCustomFunction(name, params.size());
 }
 
-void DefinitionDefn::generateLLVMSecond(ff::cg::CodeGenerator &generator) {
-  generator.builder.SetInsertPoint(&this->generatedFunction->getEntryBlock());
-  for (auto &instruction : this->instructions) {
-    instruction->generate(generator, this->generatedFunction);
+void DefinitionDefn::generateLLVM(ff::cg::CodeGenerator &generator) {
+  generator.builder.SetInsertPoint(&generatedFunction->getEntryBlock());
+  for (auto &instruction : instructions) {
+    instruction->generate(generator, generatedFunction);
   }
-
   generator.builder.CreateRetVoid();
 }
 
-void DefinitionData::resolve(const ff::sem::TypeManager &mgr) {
-  // TODO
+void DefinitionData::insertTypes(
+    ff::sem::TypeManager &mgr, std::shared_ptr<ff::sem::TypeContext> &typeCtx) {
+  this->typeContext = typeCtx;
+  typeContext->bindType(
+      name, std::shared_ptr<ff::sem::Type>(new ff::sem::TypeData(name)));
 }
 
-void DefinitionData::typeCheckSecond(ff::sem::TypeManager &mgr,
-                                     const ff::sem::TypeContext &env) const {
-  // TODO
+void DefinitionData::insertConstructors() const {
+  auto returnType = typeContext->lookupType(name);
+  ff::sem::TypeData *thisType =
+      static_cast<ff::sem::TypeData *>(returnType.get());
+  int nextTag = 0;
+
+  for (auto &constructor : constructors) {
+    constructor->tag = nextTag;
+    thisType->constructors[constructor->name] = {nextTag++};
+
+    auto fullType = returnType;
+    for (auto it = constructor->types.rbegin(); it != constructor->types.rend();
+         it++) {
+      auto type = typeContext->lookupType(*it);
+      if (!type)
+        throw 0;
+      fullType =
+          std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(type, fullType));
+    }
+
+    typeContext->bind(constructor->name, fullType);
+  }
 }
 
-void DefinitionData::generate() {
-  // TODO
-}
-
-void DefinitionData::generateLLVMFirst(ff::cg::CodeGenerator &generator) {
-  for (auto &constructor : this->constructors) {
+void DefinitionData::generateLLVM(ff::cg::CodeGenerator &generator) {
+  for (auto &constructor : constructors) {
     auto newFunction = generator.createCustomFunction(
         constructor->name, constructor->types.size());
 
     std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+
     instructions.push_back(std::unique_ptr<ff::ir::Instruction>(
         new ff::ir::Pack(constructor->tag, constructor->types.size())));
 
@@ -459,8 +429,7 @@ void DefinitionData::generateLLVMFirst(ff::cg::CodeGenerator &generator) {
     for (auto &instruction : instructions) {
       instruction->generate(generator, newFunction);
     }
+
     generator.builder.CreateRetVoid();
   }
 }
-
-void DefinitionData::generateLLVMSecond(ff::cg::CodeGenerator &generator) {}

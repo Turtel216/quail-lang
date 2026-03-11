@@ -4,7 +4,8 @@
 #include "../include/ast.hpp"
 #include "parser.hpp"
 
-std::vector<std::unique_ptr<Definition>> program;
+std::map<std::string, std::unique_ptr<DefinitionData>> defs_data;
+std::map<std::string, std::unique_ptr<DefinitionDefn>> defs_defn;
 extern yy::parser::symbol_type yylex();
 
 
@@ -35,11 +36,11 @@ extern yy::parser::symbol_type yylex();
 %define parse.error verbose
 
 %type <std::vector<std::string>> lowercaseParams uppercaseParams
-%type <std::vector<std::unique_ptr<Definition>>> program definitions
 %type <std::vector<std::unique_ptr<Branch>>> branches
 %type <std::vector<std::unique_ptr<Constructor>>> constructors
 %type <std::unique_ptr<Ast>> aAdd aMul case app appBase
-%type <std::unique_ptr<Definition>> definition defn data 
+%type <std::unique_ptr<DefinitionData>> data
+%type <std::unique_ptr<DefinitionDefn>> defn 
 %type <std::unique_ptr<Branch>> branch
 %type <std::unique_ptr<Pattern>> pattern
 %type <std::unique_ptr<Constructor>> constructor
@@ -49,22 +50,22 @@ extern yy::parser::symbol_type yylex();
 %%
 
 program
-    : definitions { program = std::move($1); }
+    : definitions { }
     ;
 
 definitions
-    : definitions definition { $$ = std::move($1); $$.push_back(std::move($2)); }
-    | definition { $$ = std::vector<std::unique_ptr<Definition>>(); $$.push_back(std::move($1)); }
+    : definitions definition { }
+    | definition { }
     ;
 
 definition
-    : defn { $$ = std::move($1); }
-    | data { $$ = std::move($1); }
+    : defn { auto name = $1->name; defs_defn[name] = std::move($1); }
+    | data { auto name = $1->name; defs_data[name] = std::move($1); }
     ;
 
 defn
     : DEFN LID lowercaseParams EQUAL OCURLY aAdd CCURLY
-        { $$ = std::unique_ptr<Definition>(
+        { $$ = std::unique_ptr<DefinitionDefn>(
             new DefinitionDefn(std::move($2), std::move($3), std::move($6))); }
     ;
 
@@ -126,7 +127,7 @@ pattern
 
 data
     : DATA UID EQUAL OCURLY constructors CCURLY
-        { $$ = std::unique_ptr<Definition>(new DefinitionData(std::move($2), std::move($5))); }
+        { $$ = std::unique_ptr<DefinitionData>(new DefinitionData(std::move($2), std::move($5))); }
     ;
 
 constructors
@@ -139,3 +140,4 @@ constructor
     : UID uppercaseParams
         { $$ = std::unique_ptr<Constructor>(new Constructor(std::move($1), std::move($2))); }
     ;
+

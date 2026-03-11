@@ -3,10 +3,8 @@
 #include "../include/driver.hpp"
 #include "../include/error.hpp"
 #include "../include/types.hpp"
-#include "instructions.hpp"
 #include "parser.hpp"
 #include <cstdio>
-#include <stdexcept>
 
 extern FILE *yyin;
 
@@ -14,14 +12,15 @@ void yy::parser::error(const std::string &msg) {
   std::cout << "An error occured: " << msg << std::endl;
 }
 
-extern std::vector<std::unique_ptr<Definition>> program;
+extern std::map<std::string, std::unique_ptr<DefinitionData>> defs_data;
+extern std::map<std::string, std::unique_ptr<DefinitionDefn>> defs_defn;
 
 constexpr std::string objectFile = "object.o";
 
 int main(int argc, char *argv[]) {
   yy::parser parser;
   ff::sem::TypeManager mgr;
-  ff::sem::TypeContext env;
+  std::shared_ptr<ff::sem::TypeContext> typeContext(new ff::sem::TypeContext);
 
   try {
     ff::drv::Cli cli(argc, argv);
@@ -39,22 +38,18 @@ int main(int argc, char *argv[]) {
     yyin = file;
 
     parser.parse();
-    for (auto &definition : program) {
-      DefinitionDefn *def = dynamic_cast<DefinitionDefn *>(definition.get());
-      if (!def)
-        continue;
-
-      std::cout << def->name;
-      for (auto &param : def->params)
+    for (auto &defDefn : defs_defn) {
+      std::cout << defDefn.second->name;
+      for (auto &param : defDefn.second->params)
         std::cout << " " << param;
       std::cout << ":" << std::endl;
 
-      def->body->print(1, std::cout);
+      defDefn.second->body->print(1, std::cout);
     }
 
-    ff::drv::typecheckProgram(program, mgr, env);
-    ff::drv::compileProgram(program);
-    ff::drv::generateLLVM(program,
+    ff::drv::typecheckProgram(defs_data, defs_defn, mgr, typeContext);
+    ff::drv::compileProgram(defs_defn);
+    ff::drv::generateLLVM(defs_data, defs_defn,
                           objectFile); // TODO: Fix hardcoded output file
     ff::drv::linkToRuntime(cli.output_file);
     ff::drv::cleanUp(objectFile); // TODO: Fix hardcoded output file
