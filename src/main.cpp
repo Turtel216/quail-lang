@@ -8,6 +8,10 @@
 
 extern FILE *yyin;
 
+extern void yypush_buffer_state(struct yy_buffer_state *);
+extern void yypop_buffer_state();
+extern struct yy_buffer_state *yy_create_buffer(FILE *, int);
+
 void yy::parser::error(const std::string &msg) {
   std::cout << "An error occured: " << msg << std::endl;
 }
@@ -16,6 +20,7 @@ extern std::map<std::string, std::unique_ptr<DefinitionData>> defs_data;
 extern std::map<std::string, std::unique_ptr<DefinitionDefn>> defs_defn;
 
 constexpr std::string objectFile = "object.o";
+constexpr const char *STD_LIB_PATH = "prelude/Base.ql";
 
 int main(int argc, char *argv[]) {
   yy::parser parser;
@@ -35,9 +40,22 @@ int main(int argc, char *argv[]) {
       llvm::errs() << "Error: Could not open file" << cli.source_file << '\n';
     }
 
+    // Open the standard library file
+    FILE *stdlibFile = fopen(STD_LIB_PATH, "r");
+    if (!stdlibFile) {
+      llvm::errs() << "Error: Could not open standard library file\n";
+      fclose(file);
+      return 1;
+    }
+
     yyin = file;
+    yypush_buffer_state(yy_create_buffer(yyin, 16384));
+
+    yyin = stdlibFile;
+    yypush_buffer_state(yy_create_buffer(yyin, 16384));
 
     parser.parse();
+
     for (auto &defDefn : defs_defn) {
       std::cout << defDefn.second->name;
       for (auto &param : defDefn.second->params)

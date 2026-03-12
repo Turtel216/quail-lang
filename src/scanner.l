@@ -1,5 +1,3 @@
-%option noyywrap
-
 %{
 #include <iostream>
 #include "../include/ast.hpp"
@@ -32,3 +30,11 @@ with { return yy::parser::make_OF(); }
 [A-Z][a-zA-Z]* { return yy::parser::make_UID(std::string(yytext)); }
 
 %%
+
+int yywrap() {
+    yypop_buffer_state();
+    if (!YY_CURRENT_BUFFER) {
+        return 1; // No more input
+    }
+    return 0; 
+}
