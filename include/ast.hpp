@@ -2,6 +2,7 @@
 
 #include "../include/binop.hpp"
 #include "../include/context.hpp"
+#include "../include/parsed_type.hpp"
 #include "../include/types.hpp"
 #include "enviroment.hpp"
 #include "generator.hpp"
@@ -57,10 +58,11 @@ public:
 class Constructor {
 public:
   std::string name;
-  std::vector<std::string> types;
+  std::vector<std::unique_ptr<ff::sem::ParsedType>> types;
   int tag;
 
-  Constructor(std::string _name, std::vector<std::string> _types)
+  Constructor(std::string _name,
+              std::vector<std::unique_ptr<ff::sem::ParsedType>> _types)
       : name(std::move(_name)), types(std::move(_types)) {}
 };
 
@@ -251,12 +253,15 @@ public: // TODO: Fix encapsulation
 class DefinitionData {
 public:
   std::string name;
+  std::vector<std::string> vars;
   std::vector<std::unique_ptr<Constructor>> constructors;
 
   std::shared_ptr<ff::sem::TypeContext> typeContext;
 
-  DefinitionData(std::string n, std::vector<std::unique_ptr<Constructor>> cs)
-      : name(std::move(n)), constructors(std::move(cs)) {}
+  DefinitionData(std::string n, std::vector<std::string> _vars,
+                 std::vector<std::unique_ptr<Constructor>> cs)
+      : name(std::move(n)), constructors(std::move(cs)),
+        vars(std::move(_vars)) {}
 
   void insertTypes(ff::sem::TypeManager &mgr,
                    std::shared_ptr<ff::sem::TypeContext> &typeCtx);

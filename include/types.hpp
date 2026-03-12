@@ -32,6 +32,7 @@ public:
 class TypeBase : public Type {
 private:
   std::string name;
+  int32_t arity;
 
 public:
   TypeBase(std::string n) : name(std::move(n)) {}
@@ -39,6 +40,7 @@ public:
   std::string getName() const noexcept { return this->name; }
 
   void print(const TypeManager &mgr, std::ostream &to) const override;
+  inline int32_t getArity() const noexcept { return this->arity; }
 };
 
 class TypeData : public TypeBase {
@@ -69,6 +71,17 @@ public:
   }
 };
 
+class TypeApp : public Type {
+public:
+  std::shared_ptr<Type> constructor;
+  std::vector<std::shared_ptr<Type>> arguments;
+
+  TypeApp(std::shared_ptr<Type> _constructor)
+      : constructor(std::move(_constructor)) {}
+
+  void print(const TypeManager &mgr, std::ostream &to) const override;
+};
+
 class TypeManager {
 private:
   int lastId = 0;
@@ -85,6 +98,10 @@ public:
   void bind(const std::string &s, std::shared_ptr<Type> t);
   void findFree(const std::shared_ptr<Type> &t,
                 std::set<std::string> &into) const;
+
+  std::shared_ptr<Type>
+  substitute(const std::map<std::string, std::shared_ptr<Type>> &subst,
+             const std::shared_ptr<Type> &t);
 
   inline int getLastId() const noexcept { return this->lastId; }
 };

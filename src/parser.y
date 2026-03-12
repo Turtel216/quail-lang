@@ -2,6 +2,7 @@
 #include <string>
 #include <iostream>
 #include "../include/ast.hpp"
+#include "../include/parsed_type.hpp"
 #include "parser.hpp"
 
 std::map<std::string, std::unique_ptr<DefinitionData>> defs_data;
@@ -44,6 +45,8 @@ extern yy::parser::symbol_type yylex();
 %type <std::unique_ptr<Branch>> branch
 %type <std::unique_ptr<Pattern>> pattern
 %type <std::unique_ptr<Constructor>> constructor
+%type <std::vector<std::unique_ptr<ff::sem::ParsedType>>> typeList
+%type <std::unique_ptr<ff::sem::ParsedType>> type nonArrowType typeListElement
 
 %start program
 
@@ -126,8 +129,8 @@ pattern
     ;
 
 data
-    : DATA UID EQUAL OCURLY constructors CCURLY
-        { $$ = std::unique_ptr<DefinitionData>(new DefinitionData(std::move($2), std::move($5))); }
+    : DATA UID lowercaseParams EQUAL OCURLY constructors CCURLY
+        { $$ = std::unique_ptr<DefinitionData>(new DefinitionData(std::move($2), std::move($3), std::move($6))); }
     ;
 
 constructors
@@ -137,7 +140,28 @@ constructors
     ;
 
 constructor
-    : UID uppercaseParams
+    : UID typeList
         { $$ = std::unique_ptr<Constructor>(new Constructor(std::move($1), std::move($2))); }
     ;
 
+type
+    : nonArrowType ARROW type { $$ = std::unique_ptr<ff::sem::ParsedType>(new ff::sem::ParsedTypeArr(std::move($1), std::move($3))); }
+    | nonArrowType { $$ = std::move($1); }
+    ;
+
+nonArrowType
+    : UID typeList { $$ = std::unique_ptr<ff::sem::ParsedType>(new ff::sem::ParsedTypeApp(std::move($1), std::move($2))); }
+    | LID { $$ = std::unique_ptr<ff::sem::ParsedType>(new ff::sem::ParsedTypeVar(std::move($1))); }
+    | OPAREN type CPAREN { $$ = std::move($2); }
+    ;
+
+typeListElement
+    : OPAREN type CPAREN { $$ = std::move($2); }
+    | UID { $$ = std::unique_ptr<ff::sem::ParsedType>(new ff::sem::ParsedTypeApp(std::move($1), {})); }
+    | LID { $$ = std::unique_ptr<ff::sem::ParsedType>(new ff::sem::ParsedTypeVar(std::move($1))); }
+    ;
+
+typeList
+    : %empty { $$ = std::vector<std::unique_ptr<ff::sem::ParsedType>>(); }
+    | typeList typeListElement { $$ = std::move($1); $$.push_back(std::move($2)); }
+    ;

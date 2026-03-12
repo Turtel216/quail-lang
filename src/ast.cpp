@@ -1,8 +1,8 @@
 #include "../include/ast.hpp"
 
+#include "../include/context.hpp"
+#include "../include/enviroment.hpp"
 #include "../include/types.hpp"
-#include "context.hpp"
-#include "enviroment.hpp"
 #include "error.hpp"
 #include "instructions.hpp"
 #include <iostream>
@@ -22,7 +22,8 @@ void AstInt::findFree(ff::sem::TypeManager &mgr,
 }
 
 std::shared_ptr<ff::sem::Type> AstInt::typecheck(ff::sem::TypeManager &mgr) {
-  return std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
+  return std::shared_ptr<ff::sem::Type>(
+      new ff::sem::TypeApp(typeContext->lookupType("Int")));
 }
 
 void AstLid::findFree(ff::sem::TypeManager &mgr,
@@ -192,7 +193,9 @@ std::shared_ptr<ff::sem::Type> AstCase::typecheck(ff::sem::TypeManager &mgr) {
   }
 
   this->inputType = mgr.resolve(case_type, var);
-  if (!dynamic_cast<ff::sem::TypeData *>(inputType.get())) {
+  ff::sem::TypeApp *appType;
+  if (!(appType = dynamic_cast<ff::sem::TypeApp *>(inputType.get())) ||
+      !dynamic_cast<ff::sem::TypeData *>(appType->constructor.get())) {
     throw ff::TypeError("attempting case analysis of non-data type");
   }
 
@@ -202,7 +205,9 @@ std::shared_ptr<ff::sem::Type> AstCase::typecheck(ff::sem::TypeManager &mgr) {
 void AstCase::generate(
     const std::shared_ptr<ff::ir::Enviroment> &env,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
-  ff::sem::TypeData *type = dynamic_cast<ff::sem::TypeData *>(inputType.get());
+  ff::sem::TypeApp *appType = dynamic_cast<ff::sem::TypeApp *>(inputType.get());
+  ff::sem::TypeData *type =
+      dynamic_cast<ff::sem::TypeData *>(appType->constructor.get());
 
   of->generate(env, into);
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
@@ -389,26 +394,44 @@ void DefinitionData::insertTypes(
 }
 
 void DefinitionData::insertConstructors() const {
-  auto returnType = typeContext->lookupType(name);
+  auto thisTypePtr = typeContext->lookupType(name);
   ff::sem::TypeData *thisType =
-      static_cast<ff::sem::TypeData *>(returnType.get());
+      static_cast<ff::sem::TypeData *>(thisTypePtr.get());
+
   int nextTag = 0;
+
+  std::set<std::string> varSet;
+  ff::sem::TypeApp *returnApp = new ff::sem::TypeApp(std::move(thisTypePtr));
+  std::shared_ptr<ff::sem::Type> returnType(returnApp);
+
+  for (auto &var : vars) {
+    if (varSet.find(var) != varSet.end())
+      throw 0;
+
+    varSet.insert(var);
+    returnApp->arguments.push_back(
+        std::shared_ptr<ff::sem::Type>(new ff::sem::TypeVar(var)));
+  }
 
   for (auto &constructor : constructors) {
     constructor->tag = nextTag;
     thisType->constructors[constructor->name] = {nextTag++};
 
-    auto fullType = returnType;
+    std::shared_ptr<ff::sem::Type> fullType = returnType;
     for (auto it = constructor->types.rbegin(); it != constructor->types.rend();
          it++) {
-      auto type = typeContext->lookupType(*it);
-      if (!type)
-        throw 0;
+      std::shared_ptr<ff::sem::Type> type = (*it)->toType(varSet, typeContext);
       fullType =
           std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(type, fullType));
     }
 
-    typeContext->bind(constructor->name, fullType);
+    std::shared_ptr<ff::sem::TypeScheme> fullScheme(
+        new ff::sem::TypeScheme(std::move(fullType)));
+
+    fullScheme->forall.insert(fullScheme->forall.begin(), vars.begin(),
+                              vars.end());
+
+    typeContext->bind(constructor->name, fullScheme);
   }
 }
 

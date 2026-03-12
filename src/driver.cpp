@@ -1,6 +1,7 @@
 #include "../include/driver.hpp"
 #include "../include/binop.hpp"
 #include "graph_function.hpp"
+#include "types.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <llvm/IR/LegacyPassManager.h>
@@ -128,10 +129,12 @@ void typecheckProgram(
     std::shared_ptr<ff::sem::TypeContext> &typeContext) {
   auto intType = std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
   typeContext->bindType("Int", intType);
+  std::shared_ptr<ff::sem::Type> intTypeApp =
+      std::shared_ptr<ff::sem::Type>(new sem::TypeApp(intType));
 
   auto binopType = std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(
-      intType,
-      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(intType, intType))));
+      intTypeApp, std::shared_ptr<ff::sem::Type>(
+                      new ff::sem::TypeArr(intTypeApp, intTypeApp))));
 
   typeContext->bind("+", binopType);
   typeContext->bind("-", binopType);
