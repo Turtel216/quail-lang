@@ -1,10 +1,14 @@
-type Bool = { True, False }
+type Option a = { 
+    None, 
+    Some a 
+}
 
-fun if c t e = {
-    match c with {
-        True -> { t }
-        False -> { e }
+
+fun foo opt = {
+    match opt with {
+        Some x -> { x }
+        None -> { 0 }
     }
 }
 
-fun main = { if (if True False True) 11 3 }
+fun main = { foo (Some 2) }

@@ -62,15 +62,15 @@ fun add x y = {
 
 ## Building from Source
 
-The Quail compiler (`qc`) is built using CMake. You will need a C++ compiler that supports C++17 (or later), LLVM development libraries, Flex, and Bison.
+The Quail compiler (`qc`) is built using CMake. You will need a C++ compiler that supports C++23 (or later), LLVM development libraries, Flex, and Bison.
 
 ### Prerequisites
 
-* CMake (>= 3.10)
-* LLVM (>= 10.0)
+* CMake (>= 3.30)
+* LLVM (>= 21.1.8)
 * Flex & Bison
 * A C++ Compiler (GCC, Clang, or MSVC)
-* A C Compiler (for the runtime)
+* A C Compiler (GCC for the runtime)
 
 ### Build Instructions
 
