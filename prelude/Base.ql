@@ -11,7 +11,7 @@ type List a = {
 }
 
 fun map f l = {
-    match lst with {
+    match l with {
         Nil -> { Nil }
         Cons x xs -> { Cons  (f x) (map f xs) }
     }
@@ -30,5 +30,3 @@ fun foldr f b l = {
         Cons x xs -> { f x (foldr f b xs)}
     }
 }
-
-fun main = { 0 }

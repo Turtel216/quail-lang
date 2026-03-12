@@ -157,7 +157,7 @@ void typecheckProgram(
 
     for (auto &dependency : defDefn.second->freeVariables) {
       if (defsDefn.find(dependency) == defsDefn.end())
-        throw ff::DebugError("typecheckProgram Error 1\n");
+        throw ff::DebugError("typecheckProgram Error\n");
 
       dependencyGraph.addEdge(defDefn.second->name, dependency);
     }
