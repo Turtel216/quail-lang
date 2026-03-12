@@ -1,5 +1,8 @@
 # Quail Programming Language
 
+> [!WARNING]  
+> The language is still in early development
+
 Quail is a strongly typed, lazy functional programming language currently in early development.Quail features a Hindley-Milner type system, powerful pattern matching, and lazy evaluation semantics backed by a Graph Reduction Machine (G-Machine).
 
 The Quail toolchain includes `qc`, an Ahead-of-Time (AOT) compiler written in C++ that leverages LLVM to generate optimized native executables, alongside a lightweight C-based runtime.
