@@ -33,4 +33,14 @@ public:
 
   const char *what() const noexcept override;
 };
+
+class DebugError : std::exception {
+public:
+  std::string description;
+
+  DebugError(std::string _description) : description(std::move(_description)) {}
+
+  const char *what() const noexcept override;
+};
+
 } // namespace ff

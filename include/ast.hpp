@@ -263,8 +263,7 @@ public:
       : name(std::move(n)), constructors(std::move(cs)),
         vars(std::move(_vars)) {}
 
-  void insertTypes(ff::sem::TypeManager &mgr,
-                   std::shared_ptr<ff::sem::TypeContext> &typeCtx);
+  void insertTypes(std::shared_ptr<ff::sem::TypeContext> &typeCtx);
   void insertConstructors() const;
   void generateLLVM(ff::cg::CodeGenerator &generator);
 };

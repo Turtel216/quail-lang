@@ -209,14 +209,20 @@ std::shared_ptr<Type> ParsedTypeApp::toType(const std::set<std::string> &vars,
                                             const TypeContext &typeCtx) const {
   auto parentType = typeCtx.lookupType(name);
   if (parentType == nullptr)
-    throw 0;
+    throw ff::DebugError("PardedTypeApp parent");
 
   TypeBase *baseType;
   if (!(baseType = dynamic_cast<TypeBase *>(parentType.get())))
-    throw 0;
+    throw ff::DebugError("Parded TypeApp base");
 
-  if (baseType->getArity() != arguments.size())
-    throw 0;
+  if (baseType->getArity() != arguments.size()) {
+    std::string arity = std::to_string(baseType->getArity());
+    std::string arguments_size = std::to_string(arguments.size());
+    std::string output =
+        "ParsedType App arity: " + arity + " != " + arguments_size;
+
+    throw ff::DebugError(output);
+  }
 
   TypeApp *newApp = new TypeApp(std::move(parentType));
   std::shared_ptr<Type> toReturn(newApp);
@@ -230,7 +236,7 @@ std::shared_ptr<Type> ParsedTypeApp::toType(const std::set<std::string> &vars,
 std::shared_ptr<Type> ParsedTypeVar::toType(const std::set<std::string> &vars,
                                             const TypeContext &typeCtx) const {
   if (vars.find(var) == vars.end())
-    throw 0;
+    throw ff::DebugError("PardedTypeVar");
 
   return std::shared_ptr<Type>(new TypeVar(var));
 }

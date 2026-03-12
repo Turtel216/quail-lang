@@ -1,4 +1,5 @@
 #include "../include/enviroment.hpp"
+#include "error.hpp"
 
 namespace ff {
 namespace ir {
@@ -9,7 +10,7 @@ int EnviromentVar::getOffset(const std::string &name) const {
   if (this->parent)
     return 1 + this->parent->getOffset(name);
 
-  throw 0;
+  throw ff::DebugError("EnviromentVar getOffset error");
 }
 
 bool EnviromentVar::hasVariable(const std::string &name) const {
@@ -19,14 +20,14 @@ bool EnviromentVar::hasVariable(const std::string &name) const {
   if (parent)
     return parent->hasVariable(name);
 
-  return false;
+  throw ff::DebugError("EnviromentVar hasVariable error");
 }
 
 int EnviromentOffset::getOffset(const std::string &name) const {
   if (parent)
     return offset + parent->getOffset(name);
 
-  throw 0;
+  throw ff::DebugError("EnviromentOffset getOffset error");
 }
 
 bool EnviromentOffset::hasVariable(const std::string &name) const {

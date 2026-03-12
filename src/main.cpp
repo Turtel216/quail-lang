@@ -71,5 +71,7 @@ int main(int argc, char *argv[]) {
               << std::endl;
   } catch (ff::CliError &err) {
     std::cout << err.what();
+  } catch (ff::DebugError &err) {
+    std::cout << err.what();
   }
 }

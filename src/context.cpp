@@ -1,4 +1,5 @@
 #include "../include/context.hpp"
+#include "error.hpp"
 #include <set>
 
 namespace ff {
@@ -26,7 +27,7 @@ std::shared_ptr<Type> TypeContext::lookupType(const std::string &name) const {
 void TypeContext::bindType(const std::string &typeName,
                            std::shared_ptr<Type> t) {
   if (lookupType(typeName) != nullptr)
-    throw 0;
+    throw ff::DebugError("TypeContext bindType error");
 
   typeNames[typeName] = t;
 }
@@ -46,9 +47,9 @@ std::shared_ptr<TypeContext> typeScope(std::shared_ptr<TypeContext> parent) {
 void TypeContext::generalize(const std::string &name, TypeManager &mgr) {
   auto namesIt = names.find(name);
   if (namesIt == names.end())
-    throw 0;
+    throw ff::DebugError("TypeContext generalize error");
   if (namesIt->second->forall.size() > 0)
-    throw 0;
+    throw ff::DebugError("TypeContext generalize error");
 
   std::set<std::string> freeVariables;
   mgr.findFree(namesIt->second->monotype, freeVariables);

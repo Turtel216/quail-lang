@@ -35,7 +35,8 @@ private:
   int32_t arity;
 
 public:
-  TypeBase(std::string n) : name(std::move(n)) {}
+  TypeBase(std::string n, int32_t _arity = 0)
+      : name(std::move(n)), arity(_arity) {}
 
   std::string getName() const noexcept { return this->name; }
 
@@ -50,7 +51,8 @@ public:
   };
   std::map<std::string, constructor> constructors;
 
-  TypeData(std::string name) : TypeBase(std::move(name)) {}
+  TypeData(std::string name, int32_t _arity = 0)
+      : TypeBase(std::move(name), _arity) {}
 };
 
 class TypeArr : public Type {

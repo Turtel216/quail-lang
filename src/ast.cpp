@@ -387,10 +387,10 @@ void DefinitionDefn::generateLLVM(ff::cg::CodeGenerator &generator) {
 }
 
 void DefinitionData::insertTypes(
-    ff::sem::TypeManager &mgr, std::shared_ptr<ff::sem::TypeContext> &typeCtx) {
+    std::shared_ptr<ff::sem::TypeContext> &typeCtx) {
   this->typeContext = typeCtx;
-  typeContext->bindType(
-      name, std::shared_ptr<ff::sem::Type>(new ff::sem::TypeData(name)));
+  typeContext->bindType(name, std::shared_ptr<ff::sem::Type>(
+                                  new ff::sem::TypeData(name, vars.size())));
 }
 
 void DefinitionData::insertConstructors() const {
@@ -406,7 +406,7 @@ void DefinitionData::insertConstructors() const {
 
   for (auto &var : vars) {
     if (varSet.find(var) != varSet.end())
-      throw 0;
+      ff::DebugError("DefinitionData::insertConstructors");
 
     varSet.insert(var);
     returnApp->arguments.push_back(

@@ -1,5 +1,6 @@
 #include "../include/driver.hpp"
 #include "../include/binop.hpp"
+#include "error.hpp"
 #include "graph_function.hpp"
 #include "types.hpp"
 #include <cstdlib>
@@ -72,12 +73,12 @@ void outputLLVM(ff::cg::CodeGenerator &generator,
     std::error_code ec;
     llvm::raw_fd_ostream file(objectFile, ec, llvm::sys::fs::OF_None);
     if (ec) {
-      throw 0;
+      throw ff::DebugError("outputLLVM error");
     } else {
       llvm::CodeGenFileType type = llvm::CodeGenFileType::ObjectFile;
       llvm::legacy::PassManager pm;
       if (targetMachine->addPassesToEmitFile(pm, file, NULL, type)) {
-        throw 0;
+        throw ff::DebugError("outputLLVM error");
       } else {
         pm.run(generator.module);
         file.close();
@@ -142,7 +143,7 @@ void typecheckProgram(
   typeContext->bind("/", binopType);
 
   for (auto &defData : defsData) {
-    defData.second->insertTypes(mgr, typeContext);
+    defData.second->insertTypes(typeContext);
   }
   for (auto &defData : defsData) {
     defData.second->insertConstructors();
@@ -156,7 +157,7 @@ void typecheckProgram(
 
     for (auto &dependency : defDefn.second->freeVariables) {
       if (defsDefn.find(dependency) == defsDefn.end())
-        throw 0;
+        throw ff::DebugError("typecheckProgram Error 1\n");
 
       dependencyGraph.addEdge(defDefn.second->name, dependency);
     }
