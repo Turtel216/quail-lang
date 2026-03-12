@@ -253,8 +253,8 @@ public: // TODO: Fix encapsulation
 class DefinitionData {
 public:
   std::string name;
-  std::vector<std::string> vars;
   std::vector<std::unique_ptr<Constructor>> constructors;
+  std::vector<std::string> vars;
 
   std::shared_ptr<ff::sem::TypeContext> typeContext;
 
