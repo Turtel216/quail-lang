@@ -100,6 +100,17 @@ make
 
 ```
 
-
-
 This will produce the `qc` compiler binary in your build directory.
+
+## Usage 
+
+```bash
+Usage: qc [source_file] [options]
+Options:
+  -o <path>      Specify the output file path
+  --help         Display this information
+```
+
+## Acknowledgements
+
+Quail’s Compiler builds upon the techniques described in [Implementing Functional Languages: A Tutorial](https://www.microsoft.com/en-us/research/wp-content/uploads/1992/01/student.pdf) and the blog series [Compiling a Functional Language Using C++](https://danilafe.com/blog/00_compiler_intro/). These resources were invaluable references throughout the development of this project.
