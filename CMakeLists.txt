@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.30)
-project(ff LANGUAGES C CXX)
+project(quail LANGUAGES C CXX)
 
 # Enable testing
 include(CTest)
@@ -77,9 +77,9 @@ set(SRC_FILES
 )
 
 # Main executable
-add_executable(ffc ${SRC_FILES})
+add_executable(qc ${SRC_FILES})
 
-target_link_libraries(ffc
+target_link_libraries(qc
     PRIVATE
         parser
         LLVM

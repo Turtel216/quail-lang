@@ -1,2 +1,0 @@
-type Bool = { True, False }
-fun main = { 3 + True }
