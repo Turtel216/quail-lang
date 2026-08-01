@@ -15,8 +15,7 @@ void CodeGenerator::createTypes() {
       llvm::StructType::create(this->ctx, "node_base");
   this->structTypes["node_app"] =
       llvm::StructType::create(this->ctx, "node_app");
-  this->structTypes["node_num"] =
-      llvm::StructType::create(this->ctx, "node_num");
+
   this->structTypes["node_global"] =
       llvm::StructType::create(this->ctx, "node_global");
   this->structTypes["node_ind"] =
@@ -37,9 +36,7 @@ void CodeGenerator::createTypes() {
       ->setBody({this->structTypes.at("node_base"), this->nodePtrType,
                  this->nodePtrType});
 
-  this->structTypes.at("node_num")
-      ->setBody({this->structTypes.at("node_base"),
-                 llvm::IntegerType::getInt32Ty(ctx)});
+
 
   this->structTypes.at("node_global")
       ->setBody({this->structTypes.at("node_base"),
@@ -135,9 +132,7 @@ void CodeGenerator::createFunctions() {
       llvm::Function::LinkageTypes::ExternalLinkage, "alloc_app",
       &this->module);
 
-  this->functions["alloc_num"] = llvm::Function::Create(
-      llvm::FunctionType::get(this->nodePtrType, {int32Type}, false),
-      llvm::Function::LinkageTypes::ExternalLinkage, "alloc_num", &module);
+
 
   this->functions["alloc_global"] = llvm::Function::Create(
       llvm::FunctionType::get(this->nodePtrType,
@@ -222,24 +217,30 @@ llvm::Value *CodeGenerator::createEval(llvm::Value *e) {
 }
 
 llvm::Value *CodeGenerator::unwrapNum(llvm::Value *v) {
-  auto structType = this->structTypes.at("node_num");
-  auto numPtrType =
-      llvm::PointerType::getUnqual(this->structTypes.at("node_num"));
-  auto cast = builder.CreatePointerCast(v, numPtrType);
+  /* Inline untagging: ptrtoint → ashr 1 → trunc to i32.
+   * The tagged value has LSB=1 and the integer in the upper bits.
+   * Arithmetic right-shift preserves the sign. */
+  auto i64Type = llvm::IntegerType::getInt64Ty(this->ctx);
+  auto i32Type = llvm::IntegerType::getInt32Ty(this->ctx);
 
-  auto offset0 = this->createI32(0);
-  auto offset1 = this->createI32(1);
-
-  auto intPtr = this->builder.CreateGEP(structType, cast, {offset0, offset1});
-
-  return this->builder.CreateLoad(llvm::IntegerType::getInt32Ty(this->ctx),
-                                  intPtr);
+  auto raw = this->builder.CreatePtrToInt(v, i64Type, "untag.raw");
+  auto shifted = this->builder.CreateAShr(
+      raw, llvm::ConstantInt::get(i64Type, 1), "untag.shifted");
+  return this->builder.CreateTrunc(shifted, i32Type, "untag.i32");
 }
 
 llvm::Value *CodeGenerator::createNum(llvm::Function *f, llvm::Value *v) {
-  auto allocNum = this->functions.at("alloc_num");
-  auto allocNumCall = builder.CreateCall(allocNum, {v});
-  return createTrack(f, allocNumCall);
+  /* Inline tagging: sext i32 → i64, shl 1, or 1, inttoptr.
+   * Produces a tagged pointer with LSB=1 — zero allocation. */
+  (void)f; /* No longer needs the function for gmachine_track */
+  auto i64Type = llvm::IntegerType::getInt64Ty(this->ctx);
+
+  auto ext = this->builder.CreateSExt(v, i64Type, "tag.ext");
+  auto shifted = this->builder.CreateShl(
+      ext, llvm::ConstantInt::get(i64Type, 1), "tag.shifted");
+  auto tagged = this->builder.CreateOr(
+      shifted, llvm::ConstantInt::get(i64Type, 1), "tag.tagged");
+  return this->builder.CreateIntToPtr(tagged, this->nodePtrType, "tag.ptr");
 }
 
 llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
