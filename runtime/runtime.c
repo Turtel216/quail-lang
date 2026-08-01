@@ -23,13 +23,6 @@ struct node_app *alloc_app(struct node_base *l, struct node_base *r) {
   return node;
 }
 
-struct node_num *alloc_num(int32_t n) {
-  struct node_num *node = (struct node_num *)alloc_node();
-  node->base.tag = NODE_NUM;
-  node->value = n;
-  return node;
-}
-
 struct node_global *alloc_global(void (*f)(struct gmachine *), int32_t a) {
   struct node_global *node = (struct node_global *)alloc_node();
   node->base.tag = NODE_GLOBAL;
@@ -52,6 +45,10 @@ void free_node_direct(struct node_base *n) {
 }
 
 void gc_visit_node(struct node_base *n) {
+  // Tagged integers are not heap pointers, nothing to trace.
+  if (IS_INT(n))
+    return;
+
   if (n->gc_reachable)
     return;
   n->gc_reachable = 1;
@@ -138,6 +135,8 @@ void gmachine_update(struct gmachine *g, size_t o) {
   struct node_ind *ind =
       (struct node_ind *)g->stack.data[g->stack.count - o - 2];
   ind->base.tag = NODE_IND;
+  // The target of the indirection may be a tagged integer, that's fine,
+  // the pointer-sized word simply holds the tagged value.
   ind->next = g->stack.data[g->stack.count -= 1];
 }
 
@@ -173,12 +172,14 @@ void gmachine_split(struct gmachine *g, size_t n) {
 }
 
 struct node_base *gmachine_track(struct gmachine *g, struct node_base *b) {
+  // Tagged integers are never heap-allocated, do not track them.
+  assert(IS_PTR(b) && "cannot track a tagged integer");
+
   g->gc_node_count++;
   b->gc_next = g->gc_nodes;
   g->gc_nodes = b;
 
   if (g->gc_node_count >= g->gc_node_threshold) {
-    uint64_t nodes_before = g->gc_node_count;
     gc_visit_node(b);
     gmachine_gc(g);
     g->gc_node_threshold = g->gc_node_count * 2;
@@ -212,6 +213,11 @@ void unwind(struct gmachine *g) {
 
   while (1) {
     struct node_base *peek = stack_peek(s, 0);
+
+    // A tagged integer is already in WHNF, stop unwinding.
+    if (IS_INT(peek))
+      break;
+
     if (peek->tag == NODE_APP) {
       struct node_app *n = (struct node_app *)peek;
       stack_push(s, n->left);
@@ -236,6 +242,12 @@ void unwind(struct gmachine *g) {
 }
 
 void print_node(struct node_base *n) {
+  // Tagged integer, print directly, no heap access.
+  if (IS_INT(n)) {
+    printf("%ld", VAL_INT(n));
+    return;
+  }
+
   if (n->tag == NODE_APP) {
     struct node_app *app = (struct node_app *)n;
     print_node(app->left);
@@ -248,9 +260,6 @@ void print_node(struct node_base *n) {
     printf("(Global: %p)", global->function);
   } else if (n->tag == NODE_IND) {
     print_node(((struct node_ind *)n)->next);
-  } else if (n->tag == NODE_NUM) {
-    struct node_num *num = (struct node_num *)n;
-    printf("%d", num->value);
   }
 }
 

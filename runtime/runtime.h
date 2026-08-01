@@ -1,12 +1,36 @@
 #ifndef RUNTIME_H_
 #define RUNTIME_H_
 
+#include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
 
+/* Value Tagging
+ *
+ * Every slot on the G-machine stack holds a "tagged value" stored as a
+ * struct node_base*.  The least significant bit (LSB) discriminates:
+ *
+ *   LSB == 1  ->  unboxed integer  (value in upper 63 bits, shifted left by 1)
+ *   LSB == 0  ->  pointer to a heap-allocated node
+ */
+
+#define IS_INT(v) ((uintptr_t)(v) & 1)
+#define IS_PTR(v) (!IS_INT(v))
+
+// Encode a C integer into a tagged value.  Shift left by 1 and set LSB.
+#define MAKE_INT(n) ((struct node_base *)(((intptr_t)(n) << 1) | 1))
+
+/* Decode a tagged value back to a C integer.  Arithmetic right-shift
+ * preserves the sign bit. */
+#define VAL_INT(v) ((int64_t)((intptr_t)(v) >> 1))
+
+// Assert that a tagged value is a real pointer before dereferencing.
+#define AS_PTR(v)                                                              \
+  (assert(IS_PTR(v) && "expected heap pointer, got tagged int"), (v))
+
 struct stack;
 
-enum node_tag { NODE_APP, NODE_NUM, NODE_GLOBAL, NODE_IND, NODE_DATA };
+enum node_tag { NODE_APP, NODE_GLOBAL, NODE_IND, NODE_DATA };
 
 struct gmachine;
 
@@ -20,11 +44,6 @@ struct node_app {
   struct node_base base;
   struct node_base *left;
   struct node_base *right;
-};
-
-struct node_num {
-  struct node_base base;
-  int32_t value;
 };
 
 struct node_global {
@@ -46,7 +65,6 @@ struct node_data {
 
 struct node_base *alloc_node();
 struct node_app *alloc_app(struct node_base *l, struct node_base *r);
-struct node_num *alloc_num(int32_t n);
 struct node_global *alloc_global(void (*f)(struct gmachine *), int32_t a);
 struct node_ind *alloc_ind(struct node_base *n);
 
@@ -67,8 +85,6 @@ void stack_update(struct stack *s, size_t o);
 void stack_alloc(struct stack *s, size_t o);
 void stack_pack(struct stack *s, size_t n, int8_t t);
 void stack_split(struct stack *s, size_t n);
-
-struct node_base *eval(struct node_base *n);
 
 struct gmachine {
   struct stack stack;
