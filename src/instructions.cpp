@@ -121,8 +121,8 @@ void Jump::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
 void Jump::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
   to << "Jump(" << std::endl;
-  for (auto &instruction_set : branches) {
-    for (auto &instruction : instruction_set) {
+  for (auto &instructionSet : branches) {
+    for (auto &instruction : instructionSet) {
       instruction->print(indent + 2, to);
     }
     to << std::endl;

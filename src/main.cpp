@@ -16,8 +16,8 @@ void yy::parser::error(const std::string &msg) {
   std::cout << "An error occured: " << msg << std::endl;
 }
 
-extern std::map<std::string, std::unique_ptr<DefinitionData>> defs_data;
-extern std::map<std::string, std::unique_ptr<DefinitionDefn>> defs_defn;
+extern std::map<std::string, std::unique_ptr<DefinitionData>> defsData;
+extern std::map<std::string, std::unique_ptr<DefinitionDefn>> defsDefn;
 
 constexpr std::string objectFile = "object.o";
 constexpr const char *STD_LIB_PATH = "prelude/Base.ql";
@@ -30,14 +30,14 @@ int main(int argc, char *argv[]) {
   try {
     ff::drv::Cli cli(argc, argv);
 
-    if (cli.help_requested) {
-      cli.print_usage(argv[0]);
+    if (cli.helpRequested) {
+      cli.printUsage(argv[0]);
       return 0;
     }
 
-    FILE *file = fopen(cli.source_file.c_str(), "r");
+    FILE *file = fopen(cli.sourceFile.c_str(), "r");
     if (!file) {
-      llvm::errs() << "Error: Could not open file" << cli.source_file << '\n';
+      llvm::errs() << "Error: Could not open file" << cli.sourceFile << '\n';
     }
 
     // Open the standard library file
@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
 
     parser.parse();
 
-    for (auto &defDefn : defs_defn) {
+    for (auto &defDefn : defsDefn) {
       std::cout << defDefn.second->name;
       for (auto &param : defDefn.second->params)
         std::cout << " " << param;
@@ -65,11 +65,11 @@ int main(int argc, char *argv[]) {
       defDefn.second->body->print(1, std::cout);
     }
 
-    ff::drv::typecheckProgram(defs_data, defs_defn, mgr, typeContext);
-    ff::drv::compileProgram(defs_defn);
-    ff::drv::generateLLVM(defs_data, defs_defn,
+    ff::drv::typecheckProgram(defsData, defsDefn, mgr, typeContext);
+    ff::drv::compileProgram(defsDefn);
+    ff::drv::generateLLVM(defsData, defsDefn,
                           objectFile); // TODO: Fix hardcoded output file
-    ff::drv::linkToRuntime(cli.output_file);
+    ff::drv::linkToRuntime(cli.outputFile);
     ff::drv::cleanUp(objectFile); // TODO: Fix hardcoded output file
   } catch (ff::UnificationError &err) {
     std::cout << "failed to unify types: " << std::endl;

@@ -246,10 +246,10 @@ llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
   auto structType = this->structTypes.at("node_data");
   auto dataPtr = llvm::PointerType::getUnqual(structType);
   auto cast = this->builder.CreatePointerCast(v, dataPtr);
-  auto offset_0 = this->createI32(0);
-  auto offset_1 = this->createI32(1);
+  auto offset0 = this->createI32(0);
+  auto offset1 = this->createI32(1);
 
-  auto tagPtr = this->builder.CreateGEP(structType, cast, {offset_0, offset_1});
+  auto tagPtr = this->builder.CreateGEP(structType, cast, {offset0, offset1});
   return this->builder.CreateLoad(llvm::IntegerType::getInt8Ty(this->ctx),
                                   tagPtr);
 }

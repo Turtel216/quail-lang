@@ -93,14 +93,14 @@ std::shared_ptr<ff::sem::Type> AstBinop::typecheck(ff::sem::TypeManager &mgr) {
   if (!ftype)
     throw ff::TypeError(std::string("unknown binary operator ") + opName(op));
 
-  auto return_type = mgr.newType();
-  auto arrow_one =
-      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(rtype, return_type));
-  auto arrow_two =
-      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(ltype, arrow_one));
+  auto returnType = mgr.newType();
+  auto arrowOne =
+      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(rtype, returnType));
+  auto arrowTwo =
+      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(ltype, arrowOne));
 
-  mgr.unify(arrow_two, ftype);
-  return return_type;
+  mgr.unify(arrowTwo, ftype);
+  return returnType;
 }
 
 void AstBinop::findFree(ff::sem::TypeManager &mgr,
@@ -136,11 +136,11 @@ std::shared_ptr<ff::sem::Type> AstApp::typecheck(ff::sem::TypeManager &mgr) {
   auto ltype = left->typecheck(mgr);
   auto rtype = right->typecheck(mgr);
 
-  auto return_type = mgr.newType();
+  auto returnType = mgr.newType();
   auto arrow =
-      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(rtype, return_type));
+      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(rtype, returnType));
   mgr.unify(arrow, ltype);
-  return return_type;
+  return returnType;
 }
 
 void AstApp::findFree(ff::sem::TypeManager &mgr,
@@ -183,23 +183,23 @@ void AstCase::findFree(ff::sem::TypeManager &mgr,
 
 std::shared_ptr<ff::sem::Type> AstCase::typecheck(ff::sem::TypeManager &mgr) {
   ff::sem::TypeVar *var;
-  auto case_type = mgr.resolve(of->typecheck(mgr), var);
-  auto branch_type = mgr.newType();
+  auto caseType = mgr.resolve(of->typecheck(mgr), var);
+  auto branchType = mgr.newType();
 
   for (auto &branch : branches) {
-    branch->pattern->typecheck(case_type, mgr, branch->expr->typeContext);
-    auto curr_branch_type = branch->expr->typecheck(mgr);
-    mgr.unify(branch_type, curr_branch_type);
+    branch->pattern->typecheck(caseType, mgr, branch->expr->typeContext);
+    auto currBranchType = branch->expr->typecheck(mgr);
+    mgr.unify(branchType, currBranchType);
   }
 
-  this->inputType = mgr.resolve(case_type, var);
+  this->inputType = mgr.resolve(caseType, var);
   ff::sem::TypeApp *appType;
   if (!(appType = dynamic_cast<ff::sem::TypeApp *>(inputType.get())) ||
       !dynamic_cast<ff::sem::TypeData *>(appType->constructor.get())) {
     throw ff::TypeError("attempting case analysis of non-data type");
   }
 
-  return branch_type;
+  return branchType;
 }
 
 void AstCase::generate(
@@ -212,57 +212,57 @@ void AstCase::generate(
   of->generate(env, into);
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
 
-  ff::ir::Jump *jump_instruction = new ff::ir::Jump();
+  ff::ir::Jump *jumpInstruction = new ff::ir::Jump();
 
-  into.push_back(std::unique_ptr<ff::ir::Instruction>(jump_instruction));
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(jumpInstruction));
 
   for (auto &branch : branches) {
-    std::vector<std::unique_ptr<ff::ir::Instruction>> branch_instructions;
+    std::vector<std::unique_ptr<ff::ir::Instruction>> branchInstructions;
     PatternVar *vpat;
     PatternConstr *cpat;
 
     if ((vpat = dynamic_cast<PatternVar *>(branch->pattern.get()))) {
       branch->expr->generate(std::shared_ptr<ff::ir::Enviroment>(
                                  new ff::ir::EnviromentOffset(1, env)),
-                             branch_instructions);
+                             branchInstructions);
 
-      for (auto &constr_pair : type->constructors) {
-        if (jump_instruction->tagMappings.find(constr_pair.second.tag) !=
-            jump_instruction->tagMappings.end())
+      for (auto &constrPair : type->constructors) {
+        if (jumpInstruction->tagMappings.find(constrPair.second.tag) !=
+            jumpInstruction->tagMappings.end())
           break;
 
-        jump_instruction->tagMappings[constr_pair.second.tag] =
-            jump_instruction->branches.size();
+        jumpInstruction->tagMappings[constrPair.second.tag] =
+            jumpInstruction->branches.size();
       }
-      jump_instruction->branches.push_back(std::move(branch_instructions));
+      jumpInstruction->branches.push_back(std::move(branchInstructions));
     } else if ((cpat = dynamic_cast<PatternConstr *>(branch->pattern.get()))) {
-      std::shared_ptr<ff::ir::Enviroment> new_env = env;
+      std::shared_ptr<ff::ir::Enviroment> newEnv = env;
 
       for (auto it = cpat->params.rbegin(); it != cpat->params.rend(); it++) {
-        new_env = std::shared_ptr<ff::ir::Enviroment>(
-            new ff::ir::EnviromentVar(*it, new_env));
+        newEnv = std::shared_ptr<ff::ir::Enviroment>(
+            new ff::ir::EnviromentVar(*it, newEnv));
       }
 
-      branch_instructions.push_back(std::unique_ptr<ff::ir::Instruction>(
+      branchInstructions.push_back(std::unique_ptr<ff::ir::Instruction>(
           new ff::ir::Split(cpat->params.size())));
-      branch->expr->generate(new_env, branch_instructions);
-      branch_instructions.push_back(std::unique_ptr<ff::ir::Instruction>(
+      branch->expr->generate(newEnv, branchInstructions);
+      branchInstructions.push_back(std::unique_ptr<ff::ir::Instruction>(
           new ff::ir::Slide(cpat->params.size())));
 
-      int new_tag = type->constructors[cpat->constr].tag;
-      if (jump_instruction->tagMappings.find(new_tag) !=
-          jump_instruction->tagMappings.end())
+      int newTag = type->constructors[cpat->constr].tag;
+      if (jumpInstruction->tagMappings.find(newTag) !=
+          jumpInstruction->tagMappings.end())
         throw ff::TypeError("technically not a type error: duplicate pattern");
 
-      jump_instruction->tagMappings[new_tag] =
-          jump_instruction->branches.size();
-      jump_instruction->branches.push_back(std::move(branch_instructions));
+      jumpInstruction->tagMappings[newTag] =
+          jumpInstruction->branches.size();
+      jumpInstruction->branches.push_back(std::move(branchInstructions));
     }
   }
 
-  for (auto &constr_pair : type->constructors) {
-    if (jump_instruction->tagMappings.find(constr_pair.second.tag) ==
-        jump_instruction->tagMappings.end())
+  for (auto &constrPair : type->constructors) {
+    if (jumpInstruction->tagMappings.find(constrPair.second.tag) ==
+        jumpInstruction->tagMappings.end())
       throw ff::TypeError("non-total pattern");
   }
 }

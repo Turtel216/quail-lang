@@ -18,7 +18,7 @@ void typecheckProgram(
 void generateLLVM(
     const std::map<std::string, std::unique_ptr<DefinitionData>> &defsData,
     const std::map<std::string, std::unique_ptr<DefinitionDefn>> &defsDefn,
-    const std::string &output_file);
+    const std::string &outputFile);
 void linkToRuntime(const std::string &output);
 void cleanUp(const std::string &objectFile);
 } // namespace drv

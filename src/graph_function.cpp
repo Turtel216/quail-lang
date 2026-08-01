@@ -60,8 +60,8 @@ void FunctionGraph::createEdges(
   for (auto &vertex : this->adjacencyList) {
     auto vertexId = groupIds[vertex.first];
     auto &vertexData = groupDataMap[vertexId];
-    for (auto &other_vertex : vertex.second) {
-      auto otherId = groupIds[other_vertex];
+    for (auto &otherVertex : vertex.second) {
+      auto otherId = groupIds[otherVertex];
       if (vertexId == otherId)
         continue;
       if (groupEdges.find({vertexId, otherId}) != groupEdges.end())

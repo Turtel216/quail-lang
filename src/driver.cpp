@@ -90,7 +90,7 @@ void outputLLVM(ff::cg::CodeGenerator &generator,
 void generateLLVM(
     const std::map<std::string, std::unique_ptr<DefinitionData>> &defsData,
     const std::map<std::string, std::unique_ptr<DefinitionDefn>> &defsDefn,
-    const std::string &output_file) {
+    const std::string &outputFile) {
   ff::cg::CodeGenerator generator;
   generateLLVMInternalOp(generator, PLUS);
   generateLLVMInternalOp(generator, MINUS);
@@ -110,7 +110,7 @@ void generateLLVM(
   }
 
   generator.module.print(llvm::outs(), nullptr);
-  outputLLVM(generator, output_file);
+  outputLLVM(generator, outputFile);
 }
 
 void linkToRuntime(const std::string &output) {
@@ -178,8 +178,8 @@ void typecheckProgram(
       defDefn->typecheck(mgr);
     }
 
-    for (auto &def_defnn_name : group->members) {
-      typeContext->generalize(def_defnn_name, mgr);
+    for (auto &defDefnName : group->members) {
+      typeContext->generalize(defDefnName, mgr);
     }
   }
 

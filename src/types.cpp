@@ -25,13 +25,13 @@ std::shared_ptr<Type> TypeManager::substitute(
     const std::shared_ptr<Type> &t) {
   std::shared_ptr<Type> temp = t;
   while (TypeVar *var = dynamic_cast<TypeVar *>(temp.get())) {
-    auto subst_it = subst.find(var->getName());
-    if (subst_it != subst.end())
-      return subst_it->second;
-    auto var_it = types.find(var->getName());
-    if (var_it == types.end())
+    auto substIt = subst.find(var->getName());
+    if (substIt != subst.end())
+      return substIt->second;
+    auto varIt = types.find(var->getName());
+    if (varIt == types.end())
       return t;
-    temp = var_it->second;
+    temp = varIt->second;
   }
 
   if (TypeArr *arr = dynamic_cast<TypeArr *>(temp.get())) {
@@ -115,12 +115,12 @@ void TypeManager::unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r) {
   } else if ((lapp = dynamic_cast<TypeApp *>(l.get())) &&
              (rapp = dynamic_cast<TypeApp *>(r.get()))) {
     unify(lapp->constructor, rapp->constructor);
-    auto left_it = lapp->arguments.begin();
-    auto right_it = rapp->arguments.begin();
-    while (left_it != lapp->arguments.end() &&
-           right_it != rapp->arguments.end()) {
-      unify(*left_it, *right_it);
-      left_it++, right_it++;
+    auto leftIt = lapp->arguments.begin();
+    auto rightIt = rapp->arguments.begin();
+    while (leftIt != lapp->arguments.end() &&
+           rightIt != rapp->arguments.end()) {
+      unify(*leftIt, *rightIt);
+      leftIt++, rightIt++;
     }
     return;
   }
@@ -217,9 +217,9 @@ std::shared_ptr<Type> ParsedTypeApp::toType(const std::set<std::string> &vars,
 
   if (baseType->getArity() != arguments.size()) {
     std::string arity = std::to_string(baseType->getArity());
-    std::string arguments_size = std::to_string(arguments.size());
+    std::string argumentsSize = std::to_string(arguments.size());
     std::string output =
-        "ParsedType App arity: " + arity + " != " + arguments_size;
+        "ParsedType App arity: " + arity + " != " + argumentsSize;
 
     throw ff::DebugError(output);
   }
@@ -243,11 +243,11 @@ std::shared_ptr<Type> ParsedTypeVar::toType(const std::set<std::string> &vars,
 
 std::shared_ptr<Type> ParsedTypeArr::toType(const std::set<std::string> &vars,
                                             const TypeContext &typeCtx) const {
-  auto new_left = left->toType(vars, typeCtx);
-  auto new_right = right->toType(vars, typeCtx);
+  auto newLeft = left->toType(vars, typeCtx);
+  auto newRight = right->toType(vars, typeCtx);
 
   return std::shared_ptr<Type>(
-      new TypeArr(std::move(new_left), std::move(new_right)));
+      new TypeArr(std::move(newLeft), std::move(newRight)));
 }
 
 } // namespace sem

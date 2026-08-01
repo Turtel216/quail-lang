@@ -5,8 +5,8 @@
 #include "../include/parsed_type.hpp"
 #include "parser.hpp"
 
-std::map<std::string, std::unique_ptr<DefinitionData>> defs_data;
-std::map<std::string, std::unique_ptr<DefinitionDefn>> defs_defn;
+std::map<std::string, std::unique_ptr<DefinitionData>> defsData;
+std::map<std::string, std::unique_ptr<DefinitionDefn>> defsDefn;
 extern yy::parser::symbol_type yylex();
 
 
@@ -62,8 +62,8 @@ definitions
     ;
 
 definition
-    : defn { auto name = $1->name; defs_defn[name] = std::move($1); }
-    | data { auto name = $1->name; defs_data[name] = std::move($1); }
+    : defn { auto name = $1->name; defsDefn[name] = std::move($1); }
+    | data { auto name = $1->name; defsData[name] = std::move($1); }
     ;
 
 defn

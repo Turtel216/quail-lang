@@ -7,13 +7,13 @@ namespace drv {
 
 class Cli {
 public:
-  std::string source_file;
-  std::string output_file = "a.out"; // Default output
-  bool help_requested = false;
+  std::string sourceFile;
+  std::string outputFile = "a.out"; // Default output
+  bool helpRequested = false;
 
   Cli(int argc, char *argv[]);
 
-  void print_usage(const char *prog_name) const;
+  void printUsage(const char *progName) const;
 
 private:
   void parse(int argc, char *argv[]);

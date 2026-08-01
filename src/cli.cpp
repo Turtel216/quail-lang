@@ -9,8 +9,8 @@ namespace drv {
 
 Cli::Cli(int argc, char *argv[]) { parse(argc, argv); }
 
-void Cli::print_usage(const char *prog_name) const {
-  std::cout << "Usage: " << prog_name << " [source_file] [options]\n"
+void Cli::printUsage(const char *progName) const {
+  std::cout << "Usage: " << progName << " [source_file] [options]\n"
             << "Options:\n"
             << "  -o <path>      Specify the output file path\n"
             << "  --help         Display this information\n";
@@ -23,11 +23,11 @@ void Cli::parse(int argc, char *argv[]) {
     const std::string &arg = args[i];
 
     if (arg == "-h" || arg == "--help") {
-      help_requested = true;
+      helpRequested = true;
       return;
     } else if (arg == "-o") {
       if (i + 1 < args.size()) {
-        output_file = args[++i];
+        outputFile = args[++i];
       } else {
         throw CliError("Error: -o requires an output path.");
       }
@@ -35,15 +35,15 @@ void Cli::parse(int argc, char *argv[]) {
       throw CliError("Unknown option: " + arg);
     } else {
       // If it doesn't start with '-', assume it's the source file
-      if (source_file.empty()) {
-        source_file = arg;
+      if (sourceFile.empty()) {
+        sourceFile = arg;
       } else {
         throw CliError("Error: Multiple source files provided.");
       }
     }
   }
 
-  if (source_file.empty() && !help_requested) {
+  if (sourceFile.empty() && !helpRequested) {
     throw CliError("Error: No input source file specified.");
   }
 }
