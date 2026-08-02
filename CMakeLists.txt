@@ -86,8 +86,7 @@ target_link_libraries(qc
 )
 
 # Tests
-#if (BUILD_TESTING)
-#    add_executable(lexer_test_success tests/lexer/test_success.cpp)
-#    target_link_libraries(lexer_test_success lexer_lib)
-#endif()
+if(BUILD_TESTING)
+    add_subdirectory(test)
+endif()
 
