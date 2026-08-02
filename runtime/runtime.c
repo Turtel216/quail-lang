@@ -5,19 +5,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* Compile-time sanity: node_base must be exactly 2 words (16 bytes). */
+_Static_assert(sizeof(struct node_base) == 16,
+               "node_base must be 16 bytes (header + gc_next)");
+
 extern void f_main(struct gmachine *s);
 
 struct node_base *alloc_node() {
   struct node_base *new_node = malloc(sizeof(struct node_app));
-  new_node->gc_next = NULL;
-  new_node->gc_reachable = 0;
   assert(new_node != NULL);
+  new_node->header = 0; /* all fields zero: tag=0, color=WHITE, size=0, fwd=0 */
+  new_node->gc_next = NULL;
   return new_node;
 }
 
 struct node_app *alloc_app(struct node_base *l, struct node_base *r) {
   struct node_app *node = (struct node_app *)alloc_node();
-  node->base.tag = NODE_APP;
+  node->base.header = MAKE_HEADER(NODE_APP, GC_WHITE, WORDS_NODE_APP);
   node->left = l;
   node->right = r;
   return node;
@@ -25,7 +29,7 @@ struct node_app *alloc_app(struct node_base *l, struct node_base *r) {
 
 struct node_global *alloc_global(void (*f)(struct gmachine *), int32_t a) {
   struct node_global *node = (struct node_global *)alloc_node();
-  node->base.tag = NODE_GLOBAL;
+  node->base.header = MAKE_HEADER(NODE_GLOBAL, GC_WHITE, WORDS_NODE_GLOBAL);
   node->arity = a;
   node->function = f;
   return node;
@@ -33,13 +37,13 @@ struct node_global *alloc_global(void (*f)(struct gmachine *), int32_t a) {
 
 struct node_ind *alloc_ind(struct node_base *n) {
   struct node_ind *node = (struct node_ind *)alloc_node();
-  node->base.tag = NODE_IND;
+  node->base.header = MAKE_HEADER(NODE_IND, GC_WHITE, WORDS_NODE_IND);
   node->next = n;
   return node;
 }
 
 void free_node_direct(struct node_base *n) {
-  if (n->tag == NODE_DATA) {
+  if (HDR_TAG(n->header) == NODE_DATA) {
     free(((struct node_data *)n)->array);
   }
 }
@@ -49,20 +53,22 @@ void gc_visit_node(struct node_base *n) {
   if (IS_INT(n))
     return;
 
-  if (n->gc_reachable)
+  // Already visited (GREY or BLACK), skip.
+  if (HDR_COLOR(n->header) != GC_WHITE)
     return;
-  n->gc_reachable = 1;
 
-  if (n->tag == NODE_APP) {
+  // Mark as BLACK (fully traced).
+  n->header = HDR_SET_COLOR(n->header, GC_BLACK);
+
+  enum node_tag tag = HDR_TAG(n->header);
+  if (tag == NODE_APP) {
     struct node_app *app = (struct node_app *)n;
     gc_visit_node(app->left);
     gc_visit_node(app->right);
-  }
-  if (n->tag == NODE_IND) {
+  } else if (tag == NODE_IND) {
     struct node_ind *ind = (struct node_ind *)n;
     gc_visit_node(ind->next);
-  }
-  if (n->tag == NODE_DATA) {
+  } else if (tag == NODE_DATA) {
     struct node_data *data = (struct node_data *)n;
     struct node_base **to_visit = data->array;
     while (*to_visit) {
@@ -134,9 +140,11 @@ void gmachine_update(struct gmachine *g, size_t o) {
   assert(g->stack.count > o + 1);
   struct node_ind *ind =
       (struct node_ind *)g->stack.data[g->stack.count - o - 2];
-  ind->base.tag = NODE_IND;
-  // The target of the indirection may be a tagged integer, that's fine,
-  // the pointer-sized word simply holds the tagged value.
+  /* Rewrite the node as an indirection, preserving the GC color. */
+  ind->base.header =
+      MAKE_HEADER(NODE_IND, HDR_COLOR(ind->base.header), WORDS_NODE_IND);
+  /* The target of the indirection may be a tagged integer, that's fine,
+   * the pointer-sized word simply holds the tagged value. */
   ind->next = g->stack.data[g->stack.count -= 1];
 }
 
@@ -157,8 +165,8 @@ void gmachine_pack(struct gmachine *g, size_t n, int8_t t) {
 
   struct node_data *new_node = (struct node_data *)alloc_node();
   new_node->array = data;
-  new_node->base.tag = NODE_DATA;
-  new_node->tag = t;
+  /* Data constructor tag 't' is embedded in the header's spare bits. */
+  new_node->base.header = MAKE_HEADER_DATA(GC_WHITE, t, WORDS_NODE_DATA);
 
   stack_popn(&g->stack, n);
   stack_push(&g->stack, gmachine_track(g, (struct node_base *)new_node));
@@ -189,16 +197,20 @@ struct node_base *gmachine_track(struct gmachine *g, struct node_base *b) {
 }
 
 void gmachine_gc(struct gmachine *g) {
+  // Mark phase: trace all roots on the stack.
   for (size_t i = 0; i < g->stack.count; i++) {
     gc_visit_node(g->stack.data[i]);
   }
 
+  // Sweep phase: free WHITE objects, reset BLACK -> WHITE for survivors.
   struct node_base **head_ptr = &g->gc_nodes;
   while (*head_ptr) {
-    if ((*head_ptr)->gc_reachable) {
-      (*head_ptr)->gc_reachable = 0;
+    if (HDR_COLOR((*head_ptr)->header) == GC_BLACK) {
+      // Survived, reset to WHITE for the next GC cycle.
+      (*head_ptr)->header = HDR_SET_COLOR((*head_ptr)->header, GC_WHITE);
       head_ptr = &(*head_ptr)->gc_next;
     } else {
+      // Unreachable (WHITE), free it.
       struct node_base *to_free = *head_ptr;
       *head_ptr = to_free->gc_next;
       free_node_direct(to_free);
@@ -218,10 +230,11 @@ void unwind(struct gmachine *g) {
     if (IS_INT(peek))
       break;
 
-    if (peek->tag == NODE_APP) {
+    enum node_tag tag = HDR_TAG(peek->header);
+    if (tag == NODE_APP) {
       struct node_app *n = (struct node_app *)peek;
       stack_push(s, n->left);
-    } else if (peek->tag == NODE_GLOBAL) {
+    } else if (tag == NODE_GLOBAL) {
       struct node_global *n = (struct node_global *)peek;
       assert(s->count > n->arity);
 
@@ -231,7 +244,7 @@ void unwind(struct gmachine *g) {
       }
 
       n->function(g);
-    } else if (peek->tag == NODE_IND) {
+    } else if (tag == NODE_IND) {
       struct node_ind *n = (struct node_ind *)peek;
       stack_pop(s);
       stack_push(s, n->next);
@@ -248,17 +261,18 @@ void print_node(struct node_base *n) {
     return;
   }
 
-  if (n->tag == NODE_APP) {
+  enum node_tag tag = HDR_TAG(n->header);
+  if (tag == NODE_APP) {
     struct node_app *app = (struct node_app *)n;
     print_node(app->left);
     putchar(' ');
     print_node(app->right);
-  } else if (n->tag == NODE_DATA) {
+  } else if (tag == NODE_DATA) {
     printf("(Packed)");
-  } else if (n->tag == NODE_GLOBAL) {
+  } else if (tag == NODE_GLOBAL) {
     struct node_global *global = (struct node_global *)n;
     printf("(Global: %p)", global->function);
-  } else if (n->tag == NODE_IND) {
+  } else if (tag == NODE_IND) {
     print_node(((struct node_ind *)n)->next);
   }
 }

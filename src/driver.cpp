@@ -114,7 +114,8 @@ void generateLLVM(
 }
 
 void linkToRuntime(const std::string &output) {
-  std::string command = "gcc -no-pie ./runtime/runtime.c object.o -o" + output;
+  std::string command =
+      "gcc -g -no-pie ./runtime/runtime.c object.o -o" + output;
   std::system(command.c_str());
 }
 

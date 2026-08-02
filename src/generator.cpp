@@ -29,8 +29,7 @@ void CodeGenerator::createTypes() {
   this->gmachineType->setBody(this->stackPointerType, this->nodePtrType);
 
   this->structTypes.at("node_base")
-      ->setBody({llvm::IntegerType::getInt32Ty(this->ctx),
-                 llvm::IntegerType::getInt8Ty(this->ctx), this->nodePtrType});
+      ->setBody({llvm::IntegerType::getInt64Ty(this->ctx), this->nodePtrType});
 
   this->structTypes.at("node_app")
       ->setBody({this->structTypes.at("node_base"), this->nodePtrType,
@@ -45,9 +44,10 @@ void CodeGenerator::createTypes() {
   this->structTypes.at("node_ind")
       ->setBody({this->structTypes.at("node_base"), this->nodePtrType});
 
+  /* node_data: the data constructor tag is now in the header's spare bits,
+   * so the struct is just {node_base, node_base**}. */
   this->structTypes.at("node_data")
       ->setBody({this->structTypes.at("node_base"),
-                 llvm::IntegerType::getInt8Ty(this->ctx),
                  llvm::PointerType::getUnqual(this->nodePtrType)});
 }
 
@@ -244,15 +244,22 @@ llvm::Value *CodeGenerator::createNum(llvm::Function *f, llvm::Value *v) {
 }
 
 llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
-  auto structType = this->structTypes.at("node_data");
-  auto dataPtr = llvm::PointerType::getUnqual(structType);
-  auto cast = this->builder.CreatePointerCast(v, dataPtr);
+  /* Extract the data constructor tag from the header's bits [11:4].
+   * The header is field 0 of node_base, which is field 0 of any node struct.
+   * Since v is a node_base*, GEP {0, 0} reaches the uint64_t header. */
+  auto baseType = this->structTypes.at("node_base");
+  auto i64Type = llvm::IntegerType::getInt64Ty(this->ctx);
+  auto i8Type = llvm::IntegerType::getInt8Ty(this->ctx);
   auto offset0 = this->createI32(0);
-  auto offset1 = this->createI32(1);
 
-  auto tagPtr = this->builder.CreateGEP(structType, cast, {offset0, offset1});
-  return this->builder.CreateLoad(llvm::IntegerType::getInt8Ty(this->ctx),
-                                  tagPtr);
+  auto headerPtr =
+      this->builder.CreateGEP(baseType, v, {offset0, offset0}, "hdr.ptr");
+  auto header = this->builder.CreateLoad(i64Type, headerPtr, "hdr.val");
+  auto shifted = this->builder.CreateLShr(
+      header, llvm::ConstantInt::get(i64Type, 4), "dtag.shifted");
+  auto masked = this->builder.CreateAnd(
+      shifted, llvm::ConstantInt::get(i64Type, 0xFF), "dtag.masked");
+  return this->builder.CreateTrunc(masked, i8Type, "dtag.i8");
 }
 
 llvm::Value *CodeGenerator::createGlobal(llvm::Function *f, llvm::Value *gf,
