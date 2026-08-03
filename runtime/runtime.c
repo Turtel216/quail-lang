@@ -11,36 +11,238 @@ _Static_assert(sizeof(struct node_base) == 16,
 
 extern void f_main(struct gmachine *s);
 
-struct node_base *alloc_node() {
-  struct node_base *new_node = malloc(sizeof(struct node_app));
-  assert(new_node != NULL);
-  new_node->header = 0; /* all fields zero: tag=0, color=WHITE, size=0, fwd=0 */
-  new_node->gc_next = NULL;
-  return new_node;
+/* =========================================================================
+ * Minor Heap -- Bump Allocator
+ * =========================================================================
+ *
+ * The minor heap is a contiguous region of memory.  Allocation proceeds
+ * from high addresses to low addresses (OCaml style):
+ *
+ *   start                       top                              limit
+ *     |       free space         |        allocated objects        |
+ *     v                          v                                 v
+ *     [__________________________|+++++++++++++++++++++++++++++++++++]
+ *
+ * minor_alloc(g, size) decrements `top` by `size` and returns the new `top`.
+ * When there is not enough room (new_top < start), a minor GC is triggered
+ * to promote surviving objects to the major heap, then the heap is reset.
+ * ========================================================================= */
+
+/* Check whether a pointer falls within the minor heap region. */
+static inline int in_minor_heap(struct gmachine *g, struct node_base *n) {
+  uint8_t *p = (uint8_t *)n;
+  return p >= g->minor_heap.start && p < g->minor_heap.limit;
 }
 
-struct node_app *alloc_app(struct node_base *l, struct node_base *r) {
-  struct node_app *node = (struct node_app *)alloc_node();
+/* Bump-allocate `size_bytes` from the minor heap.
+ * Returns a zeroed-header node_base pointer.  May trigger minor_gc. */
+static struct node_base *minor_alloc(struct gmachine *g, size_t size_bytes) {
+  assert(size_bytes >= sizeof(struct node_base));
+  assert(size_bytes % sizeof(uint64_t) == 0);
+
+  uint8_t *new_top = g->minor_heap.top - size_bytes;
+  if (new_top < g->minor_heap.start) {
+    minor_gc(g);
+    new_top = g->minor_heap.top - size_bytes;
+    assert(new_top >= g->minor_heap.start &&
+           "minor heap overflow: single object larger than heap");
+  }
+
+  g->minor_heap.top = new_top;
+  struct node_base *node = (struct node_base *)new_top;
+  node->header = 0;
+  node->gc_next = NULL;
+  return node;
+}
+
+/* =========================================================================
+ * Allocation functions
+ *
+ * Each allocator bump-allocates from the minor heap.  Arguments that are
+ * GC-managed pointers (could be minor-heap objects) must be pushed onto the
+ * stack before calling minor_alloc, because a minor GC inside minor_alloc
+ * may relocate them.  After minor_alloc returns, we pop the (possibly
+ * updated) values back.
+ * ========================================================================= */
+
+struct node_app *alloc_app(struct gmachine *g, struct node_base *l,
+                           struct node_base *r) {
+  /* Protect l and r: they may point into the minor heap and a GC inside
+   * minor_alloc would move them.  Pushing them onto the stack ensures the
+   * GC can find and update them. */
+  stack_push(&g->stack, l);
+  stack_push(&g->stack, r);
+
+  struct node_app *node =
+      (struct node_app *)minor_alloc(g, sizeof(struct node_app));
+
+  // Pop back, values may have been updated by a minor GC.
+  r = stack_pop(&g->stack);
+  l = stack_pop(&g->stack);
+
   node->base.header = MAKE_HEADER(NODE_APP, GC_WHITE, WORDS_NODE_APP);
   node->left = l;
   node->right = r;
   return node;
 }
 
-struct node_global *alloc_global(void (*f)(struct gmachine *), int32_t a) {
-  struct node_global *node = (struct node_global *)alloc_node();
+struct node_global *alloc_global(struct gmachine *g,
+                                 void (*f)(struct gmachine *), int32_t a) {
+  /* f is a C function pointer and a is an int, neither is a GC-managed
+   * pointer, so no stack protection is needed. */
+  struct node_global *node =
+      (struct node_global *)minor_alloc(g, sizeof(struct node_global));
   node->base.header = MAKE_HEADER(NODE_GLOBAL, GC_WHITE, WORDS_NODE_GLOBAL);
   node->arity = a;
   node->function = f;
   return node;
 }
 
-struct node_ind *alloc_ind(struct node_base *n) {
-  struct node_ind *node = (struct node_ind *)alloc_node();
+struct node_ind *alloc_ind(struct gmachine *g, struct node_base *n) {
+  /* Protect n if it is a GC-managed pointer. */
+  int need_protect = (n != NULL && IS_PTR(n));
+  if (need_protect)
+    stack_push(&g->stack, n);
+
+  struct node_ind *node =
+      (struct node_ind *)minor_alloc(g, sizeof(struct node_ind));
+
+  if (need_protect)
+    n = stack_pop(&g->stack);
+
   node->base.header = MAKE_HEADER(NODE_IND, GC_WHITE, WORDS_NODE_IND);
   node->next = n;
   return node;
 }
+
+/* =========================================================================
+ * Minor GC, Promote surviving objects to the major heap
+ *
+ * Algorithm (iterative, no recursion):
+ *
+ *   1. Record where the major heap list starts (old_gc_head).
+ *   2. Scan GC roots (the stack) and promote each minor-heap object
+ *      to the major heap via promote_node().  promote_node:
+ *        - malloc's a copy in the major heap
+ *        - prepends it to the gc_nodes list
+ *        - leaves a forwarding pointer in the old minor-heap copy
+ *   3. Iteratively scan newly promoted objects.  For each promoted
+ *      object, update its child pointers via promote_node().  Any
+ *      new promotions are prepended to gc_nodes.  Repeat until
+ *      no new promotions occur (fixed point).
+ *   4. Free the arrays of dead (non-forwarded) NODE_DATA objects
+ *      by scanning the minor heap linearly using HDR_SIZE.
+ *   5. Reset the minor heap (top = limit).
+ *   6. Optionally trigger a major GC if the promotion pushed the
+ *      major heap past its threshold.
+ * ========================================================================= */
+
+/* Promote a single minor-heap object to the major heap.
+ * Returns the (possibly new) pointer -- unchanged for ints, non-minor
+ * pointers, and already-forwarded objects. */
+static struct node_base *promote_node(struct gmachine *g, struct node_base *n) {
+  if (IS_INT(n))
+    return n;
+  if (!in_minor_heap(g, n))
+    return n;
+  if (HDR_IS_FWD(n->header))
+    return HDR_FWD(n->header);
+
+  /* Allocate a copy in the major heap (malloc). */
+  size_t size = HDR_SIZE(n->header) * sizeof(uint64_t);
+  assert(size > 0 && "promoting object with zero size");
+  struct node_base *copy = malloc(size);
+  assert(copy != NULL);
+  memcpy(copy, n, size);
+
+  /* Prepend to the major heap linked list. */
+  copy->gc_next = g->gc_nodes;
+  g->gc_nodes = copy;
+  g->gc_node_count++;
+
+  /* Leave a forwarding pointer in the old minor-heap location.
+   * The low 16 bits (tag, color, dtag, size) are preserved so that
+   * the linear scan in step 4 can still read HDR_SIZE. */
+  n->header = HDR_SET_FWD(n->header, copy);
+
+  return copy;
+}
+
+/* Update all GC-managed child pointers of a single promoted node. */
+static void scan_promoted(struct gmachine *g, struct node_base *node) {
+  enum node_tag tag = HDR_TAG(node->header);
+  if (tag == NODE_APP) {
+    struct node_app *app = (struct node_app *)node;
+    app->left = promote_node(g, app->left);
+    app->right = promote_node(g, app->right);
+  } else if (tag == NODE_IND) {
+    struct node_ind *ind = (struct node_ind *)node;
+    ind->next = promote_node(g, ind->next);
+  } else if (tag == NODE_DATA) {
+    struct node_data *data = (struct node_data *)node;
+    for (struct node_base **p = data->array; *p; p++) {
+      *p = promote_node(g, *p);
+    }
+  }
+  /* NODE_GLOBAL has no GC-managed children, nothing to scan. */
+}
+
+void minor_gc(struct gmachine *g) {
+  // Record boundary so we know which gc_nodes are newly promoted.
+  struct node_base *scanned_up_to = g->gc_nodes;
+
+  /* Promote roots, every stack entry pointing into the minor
+   * heap gets a fresh copy in the major heap. */
+  for (size_t i = 0; i < g->stack.count; i++) {
+    g->stack.data[i] = promote_node(g, g->stack.data[i]);
+  }
+
+  /* Iteratively scan promoted objects.  Each batch may cause
+   * further promotions, which are prepended to gc_nodes.  We keep
+   * scanning until no new objects appear. */
+  while (g->gc_nodes != scanned_up_to) {
+    struct node_base *batch_start = g->gc_nodes;
+    struct node_base *p = g->gc_nodes;
+    while (p != scanned_up_to) {
+      scan_promoted(g, p);
+      p = p->gc_next;
+    }
+    scanned_up_to = batch_start;
+  }
+
+  /* Free the arrays of dead (non-forwarded) NODE_DATA objects.
+   * Walk the minor heap linearly from top (lowest alloc) to limit (end).
+   * Each object's size is read from HDR_SIZE (preserved even after
+   * forwarding was set in the upper bits). */
+  {
+    uint8_t *scan = g->minor_heap.top;
+    while (scan < g->minor_heap.limit) {
+      struct node_base *obj = (struct node_base *)scan;
+      size_t obj_size = HDR_SIZE(obj->header) * sizeof(uint64_t);
+      assert(obj_size > 0 && "zero-size object in minor heap");
+
+      if (!HDR_IS_FWD(obj->header) && HDR_TAG(obj->header) == NODE_DATA) {
+        struct node_data *data = (struct node_data *)obj;
+        free(data->array);
+      }
+
+      scan += obj_size;
+    }
+  }
+
+  // Reset the minor heap, all live objects have been promoted.
+  g->minor_heap.top = g->minor_heap.limit;
+
+  // Trigger a major GC if the promotion pushed us past threshold.
+  if (g->gc_node_count >= g->gc_node_threshold) {
+    gmachine_gc(g);
+    g->gc_node_threshold = g->gc_node_count * 2;
+    if (g->gc_node_threshold < 128)
+      g->gc_node_threshold = 128;
+  }
+}
+
+// Major GC, Mark-and-Sweep over the major heap (gc_nodes list)
 
 void free_node_direct(struct node_base *n) {
   if (HDR_TAG(n->header) == NODE_DATA) {
@@ -78,6 +280,32 @@ void gc_visit_node(struct node_base *n) {
   }
 }
 
+void gmachine_gc(struct gmachine *g) {
+  // Mark phase: trace all roots on the stack.
+  for (size_t i = 0; i < g->stack.count; i++) {
+    gc_visit_node(g->stack.data[i]);
+  }
+
+  // Sweep phase: free WHITE objects, reset BLACK -> WHITE for survivors.
+  struct node_base **head_ptr = &g->gc_nodes;
+  while (*head_ptr) {
+    if (HDR_COLOR((*head_ptr)->header) == GC_BLACK) {
+      // Survived, reset to WHITE for the next GC cycle.
+      (*head_ptr)->header = HDR_SET_COLOR((*head_ptr)->header, GC_WHITE);
+      head_ptr = &(*head_ptr)->gc_next;
+    } else {
+      // Unreachable (WHITE), free it.
+      struct node_base *to_free = *head_ptr;
+      *head_ptr = to_free->gc_next;
+      free_node_direct(to_free);
+      free(to_free);
+      g->gc_node_count--;
+    }
+  }
+}
+
+// === Stack ===
+
 void stack_init(struct stack *s) {
   s->size = 4;
   s->count = 0;
@@ -110,8 +338,17 @@ void stack_popn(struct stack *s, size_t n) {
   s->count -= n;
 }
 
+// === G-Machine ===
+
 void gmachine_init(struct gmachine *g) {
   stack_init(&g->stack);
+
+  // Allocate the minor heap region.
+  g->minor_heap.start = malloc(MINOR_HEAP_SIZE);
+  assert(g->minor_heap.start != NULL && "failed to allocate minor heap");
+  g->minor_heap.limit = g->minor_heap.start + MINOR_HEAP_SIZE;
+  g->minor_heap.top = g->minor_heap.limit; /* empty, grows downward */
+
   g->gc_nodes = NULL;
   g->gc_node_count = 0;
   g->gc_node_threshold = 128;
@@ -119,9 +356,17 @@ void gmachine_init(struct gmachine *g) {
 
 void gmachine_free(struct gmachine *g) {
   stack_free(&g->stack);
+
+  /* Free the minor heap region.  Any surviving objects should have been
+   * promoted or discarded by now. */
+  free(g->minor_heap.start);
+  g->minor_heap.start = NULL;
+  g->minor_heap.top = NULL;
+  g->minor_heap.limit = NULL;
+
+  // Free all major heap objects.
   struct node_base *to_free = g->gc_nodes;
   struct node_base *next;
-
   while (to_free) {
     next = to_free->gc_next;
     free_node_direct(to_free);
@@ -140,36 +385,36 @@ void gmachine_update(struct gmachine *g, size_t o) {
   assert(g->stack.count > o + 1);
   struct node_ind *ind =
       (struct node_ind *)g->stack.data[g->stack.count - o - 2];
-  /* Rewrite the node as an indirection, preserving the GC color. */
+  // Rewrite the node as an indirection, preserving the GC color. */
   ind->base.header =
       MAKE_HEADER(NODE_IND, HDR_COLOR(ind->base.header), WORDS_NODE_IND);
-  /* The target of the indirection may be a tagged integer, that's fine,
-   * the pointer-sized word simply holds the tagged value. */
   ind->next = g->stack.data[g->stack.count -= 1];
 }
 
 void gmachine_alloc(struct gmachine *g, size_t o) {
   while (o--) {
-    stack_push(&g->stack,
-               gmachine_track(g, (struct node_base *)alloc_ind(NULL)));
+    stack_push(&g->stack, (struct node_base *)alloc_ind(g, NULL));
   }
 }
 
 void gmachine_pack(struct gmachine *g, size_t n, int8_t t) {
   assert(g->stack.count >= n);
 
+  /* Allocate the node_data FIRST (may trigger minor GC, which updates
+   * stack entries).  Then copy from the stack so we get the post-GC
+   * pointers. */
+  struct node_data *new_node =
+      (struct node_data *)minor_alloc(g, sizeof(struct node_data));
+  new_node->base.header = MAKE_HEADER_DATA(GC_WHITE, t, WORDS_NODE_DATA);
+
   struct node_base **data = malloc(sizeof(*data) * (n + 1));
   assert(data != NULL);
   memcpy(data, &g->stack.data[g->stack.count - n], n * sizeof(*data));
   data[n] = NULL;
-
-  struct node_data *new_node = (struct node_data *)alloc_node();
   new_node->array = data;
-  /* Data constructor tag 't' is embedded in the header's spare bits. */
-  new_node->base.header = MAKE_HEADER_DATA(GC_WHITE, t, WORDS_NODE_DATA);
 
   stack_popn(&g->stack, n);
-  stack_push(&g->stack, gmachine_track(g, (struct node_base *)new_node));
+  stack_push(&g->stack, (struct node_base *)new_node);
 }
 
 void gmachine_split(struct gmachine *g, size_t n) {
@@ -179,46 +424,7 @@ void gmachine_split(struct gmachine *g, size_t n) {
   }
 }
 
-struct node_base *gmachine_track(struct gmachine *g, struct node_base *b) {
-  // Tagged integers are never heap-allocated, do not track them.
-  assert(IS_PTR(b) && "cannot track a tagged integer");
-
-  g->gc_node_count++;
-  b->gc_next = g->gc_nodes;
-  g->gc_nodes = b;
-
-  if (g->gc_node_count >= g->gc_node_threshold) {
-    gc_visit_node(b);
-    gmachine_gc(g);
-    g->gc_node_threshold = g->gc_node_count * 2;
-  }
-
-  return b;
-}
-
-void gmachine_gc(struct gmachine *g) {
-  // Mark phase: trace all roots on the stack.
-  for (size_t i = 0; i < g->stack.count; i++) {
-    gc_visit_node(g->stack.data[i]);
-  }
-
-  // Sweep phase: free WHITE objects, reset BLACK -> WHITE for survivors.
-  struct node_base **head_ptr = &g->gc_nodes;
-  while (*head_ptr) {
-    if (HDR_COLOR((*head_ptr)->header) == GC_BLACK) {
-      // Survived, reset to WHITE for the next GC cycle.
-      (*head_ptr)->header = HDR_SET_COLOR((*head_ptr)->header, GC_WHITE);
-      head_ptr = &(*head_ptr)->gc_next;
-    } else {
-      // Unreachable (WHITE), free it.
-      struct node_base *to_free = *head_ptr;
-      *head_ptr = to_free->gc_next;
-      free_node_direct(to_free);
-      free(to_free);
-      g->gc_node_count--;
-    }
-  }
-}
+// === Evaluation ===
 
 void unwind(struct gmachine *g) {
   struct stack *s = &g->stack;
@@ -279,11 +485,13 @@ void print_node(struct node_base *n) {
 
 int main(int argc, char **argv) {
   struct gmachine gmachine;
-  struct node_global *first_node = alloc_global(f_main, 0);
+
+  // Must init BEFORE allocating, alloc_global needs the minor heap.
+  gmachine_init(&gmachine);
+
+  struct node_global *first_node = alloc_global(&gmachine, f_main, 0);
   struct node_base *result;
 
-  gmachine_init(&gmachine);
-  gmachine_track(&gmachine, (struct node_base *)first_node);
   stack_push(&gmachine.stack, (struct node_base *)first_node);
   unwind(&gmachine);
   result = stack_pop(&gmachine.stack);

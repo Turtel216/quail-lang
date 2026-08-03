@@ -57,7 +57,6 @@ public:
   void createSlide(llvm::Function *, llvm::Value *);
   void createAlloc(llvm::Function *, llvm::Value *);
   void createUnwind(llvm::Function *);
-  llvm::Value *createTrack(llvm::Function *, llvm::Value *);
   llvm::Value *createEval(llvm::Value *);
 
   llvm::Value *unwrapNum(llvm::Value *);

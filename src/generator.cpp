@@ -119,29 +119,30 @@ void CodeGenerator::createFunctions() {
       llvm::Function::LinkageTypes::ExternalLinkage, "gmachine_split",
       &this->module);
 
-  functions["gmachine_track"] = llvm::Function::Create(
-      llvm::FunctionType::get(
-          this->nodePtrType, {this->gmachinePtrType, this->nodePtrType}, false),
-      llvm::Function::LinkageTypes::ExternalLinkage, "gmachine_track",
-      &this->module);
-
   auto int32Type = llvm::IntegerType::getInt32Ty(ctx);
+
+  /* alloc_app now takes (gmachine*, node_base*, node_base*) -> node_base*.
+   * The gmachine pointer gives access to the minor heap. */
   functions["alloc_app"] = llvm::Function::Create(
-      llvm::FunctionType::get(this->nodePtrType,
-                              {this->nodePtrType, this->nodePtrType}, false),
+      llvm::FunctionType::get(
+          this->nodePtrType,
+          {this->gmachinePtrType, this->nodePtrType, this->nodePtrType}, false),
       llvm::Function::LinkageTypes::ExternalLinkage, "alloc_app",
       &this->module);
 
-
-
+  /* alloc_global: (gmachine*, function, i32) -> node_base* */
   this->functions["alloc_global"] = llvm::Function::Create(
-      llvm::FunctionType::get(this->nodePtrType,
-                              {this->functionType, int32Type}, false),
+      llvm::FunctionType::get(
+          this->nodePtrType,
+          {this->gmachinePtrType, this->functionType, int32Type}, false),
       llvm::Function::LinkageTypes::ExternalLinkage, "alloc_global",
       &this->module);
 
+  /* alloc_ind: (gmachine*, node_base*) -> node_base* */
   this->functions["alloc_ind"] = llvm::Function::Create(
-      llvm::FunctionType::get(this->nodePtrType, {this->nodePtrType}, false),
+      llvm::FunctionType::get(
+          this->nodePtrType,
+          {this->gmachinePtrType, this->nodePtrType}, false),
       llvm::Function::LinkageTypes::ExternalLinkage, "alloc_ind",
       &this->module);
 
@@ -263,19 +264,19 @@ llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
 }
 
 llvm::Value *CodeGenerator::createGlobal(llvm::Function *f, llvm::Value *gf,
-                                         llvm::Value *a) {
+                                          llvm::Value *a) {
   auto allocGlobal = this->functions.at("alloc_global");
-  auto allocGlobalCall = builder.CreateCall(allocGlobal, {gf, a});
-
-  return createTrack(f, allocGlobalCall);
+  /* Pass the gmachine pointer -- alloc_global bump-allocates from the
+   * minor heap and handles GC internally, no separate track call. */
+  return builder.CreateCall(allocGlobal, {f->arg_begin(), gf, a});
 }
 
 llvm::Value *CodeGenerator::createApp(llvm::Function *f, llvm::Value *l,
-                                      llvm::Value *r) {
+                                       llvm::Value *r) {
   auto allocApp = this->functions.at("alloc_app");
-  auto allocAppCall = builder.CreateCall(allocApp, {l, r});
-
-  return createTrack(f, allocAppCall);
+  /* Pass the gmachine pointer -- alloc_app bump-allocates from the
+   * minor heap and handles GC internally, no separate track call. */
+  return builder.CreateCall(allocApp, {f->arg_begin(), l, r});
 }
 
 llvm::Function *CodeGenerator::createCustomFunction(std::string name,
@@ -301,10 +302,7 @@ void CodeGenerator::createUnwind(llvm::Function *f) {
   this->builder.CreateCall(unwind, {f->args().begin()});
 }
 
-llvm::Value *CodeGenerator::createTrack(llvm::Function *f, llvm::Value *v) {
-  auto track = this->functions.at("gmachine_track");
-  return builder.CreateCall(track, {f->arg_begin(), v});
-}
+
 
 llvm::Value *CodeGenerator::unwrapGmachineStackPtr(llvm::Value *g) {
   auto offset0 = this->createI32(0);
