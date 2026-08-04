@@ -116,31 +116,74 @@ struct node_ind *alloc_ind(struct gmachine *g, struct node_base *n) {
 }
 
 /* =========================================================================
- * Minor GC, Promote surviving objects to the major heap
+ * Minor GC -- Cheney's Stop-and-Copy Algorithm
+ * =========================================================================
  *
- * Algorithm (iterative, no recursion):
+ * Promotes surviving minor-heap objects to the major heap (malloc).
+ * Uses Cheney's algorithm: a single-pass BFS over the live object graph
+ * with no recursion and no auxiliary mark stack.
  *
- *   1. Record where the major heap list starts (old_gc_head).
- *   2. Scan GC roots (the stack) and promote each minor-heap object
- *      to the major heap via promote_node().  promote_node:
- *        - malloc's a copy in the major heap
- *        - prepends it to the gc_nodes list
- *        - leaves a forwarding pointer in the old minor-heap copy
- *   3. Iteratively scan newly promoted objects.  For each promoted
- *      object, update its child pointers via promote_node().  Any
- *      new promotions are prepended to gc_nodes.  Repeat until
- *      no new promotions occur (fixed point).
- *   4. Free the arrays of dead (non-forwarded) NODE_DATA objects
- *      by scanning the minor heap linearly using HDR_SIZE.
- *   5. Reset the minor heap (top = limit).
- *   6. Optionally trigger a major GC if the promotion pushed the
- *      major heap past its threshold.
+ * Terminology (standard Cheney):
+ *   evacuate  -- copy a single object from minor heap to major heap,
+ *                leave a forwarding pointer behind, and append the
+ *                copy to the scan queue.
+ *   scavenge  -- scan one evacuated object's child pointers and
+ *                evacuate any that still point into the minor heap.
+ *   scan queue -- explicit FIFO that serves the role of Cheney's
+ *                 "to-space scan pointer".  Since promoted objects
+ *                 are malloc'd (non-contiguous), we cannot use a
+ *                 linear scan pointer; an array-based queue gives
+ *                 the same O(N) single-pass behaviour.
+ *
+ * Algorithm:
+ *   1. Evacuate roots (stack entries pointing into the minor heap).
+ *   2. While the scan pointer has not caught up with the queue tail,
+ *      scavenge the next evacuated object.
+ *   3. Free the arrays of dead (non-forwarded) NODE_DATA objects
+ *      by walking the minor heap linearly.
+ *   4. Reset the minor heap (top = limit).
+ *   5. Optionally trigger a major GC if the threshold is exceeded.
  * ========================================================================= */
 
-/* Promote a single minor-heap object to the major heap.
- * Returns the (possibly new) pointer -- unchanged for ints, non-minor
- * pointers, and already-forwarded objects. */
-static struct node_base *promote_node(struct gmachine *g, struct node_base *n) {
+/* -- Scan Queue (Cheney worklist) ----------------------------------------- */
+
+struct scan_queue {
+  struct node_base **data;
+  size_t count;    /* next free slot (Cheney "free pointer") */
+  size_t scan;     /* next object to scavenge (Cheney "scan pointer") */
+  size_t capacity;
+};
+
+static void queue_init(struct scan_queue *q) {
+  q->capacity = 64;
+  q->count = 0;
+  q->scan = 0;
+  q->data = malloc(sizeof(struct node_base *) * q->capacity);
+  assert(q->data != NULL);
+}
+
+static void queue_push(struct scan_queue *q, struct node_base *n) {
+  if (q->count >= q->capacity) {
+    q->capacity *= 2;
+    q->data = realloc(q->data, sizeof(struct node_base *) * q->capacity);
+    assert(q->data != NULL);
+  }
+  q->data[q->count++] = n;
+}
+
+static void queue_free(struct scan_queue *q) {
+  free(q->data);
+  q->data = NULL;
+}
+
+/* -- Evacuate ------------------------------------------------------------- */
+
+/* Copy a minor-heap object to the major heap (malloc), leave a forwarding
+ * pointer in the old location, and append the copy to the scan queue.
+ * Returns the new address (or the original value for ints, major-heap
+ * pointers, and already-forwarded objects). */
+static struct node_base *evacuate(struct gmachine *g, struct node_base *n,
+                                  struct scan_queue *q) {
   if (IS_INT(n))
     return n;
   if (!in_minor_heap(g, n))
@@ -148,9 +191,9 @@ static struct node_base *promote_node(struct gmachine *g, struct node_base *n) {
   if (HDR_IS_FWD(n->header))
     return HDR_FWD(n->header);
 
-  /* Allocate a copy in the major heap (malloc). */
+  /* Allocate a copy in the major heap. */
   size_t size = HDR_SIZE(n->header) * sizeof(uint64_t);
-  assert(size > 0 && "promoting object with zero size");
+  assert(size > 0 && "evacuating object with zero size");
   struct node_base *copy = malloc(size);
   assert(copy != NULL);
   memcpy(copy, n, size);
@@ -162,62 +205,69 @@ static struct node_base *promote_node(struct gmachine *g, struct node_base *n) {
 
   /* Leave a forwarding pointer in the old minor-heap location.
    * The low 16 bits (tag, color, dtag, size) are preserved so that
-   * the linear scan in step 4 can still read HDR_SIZE. */
+   * the linear sweep in step 3 can still read HDR_SIZE. */
   n->header = HDR_SET_FWD(n->header, copy);
+
+  /* Append to the scan queue -- will be scavenged later. */
+  queue_push(q, copy);
 
   return copy;
 }
 
-/* Update all GC-managed child pointers of a single promoted node. */
-static void scan_promoted(struct gmachine *g, struct node_base *node) {
+/* -- Scavenge ------------------------------------------------------------- */
+
+/* Scan one evacuated object's child pointers and evacuate any that
+ * still point into the minor heap. */
+static void scavenge(struct gmachine *g, struct node_base *node,
+                     struct scan_queue *q) {
   enum node_tag tag = HDR_TAG(node->header);
   if (tag == NODE_APP) {
     struct node_app *app = (struct node_app *)node;
-    app->left = promote_node(g, app->left);
-    app->right = promote_node(g, app->right);
+    app->left = evacuate(g, app->left, q);
+    app->right = evacuate(g, app->right, q);
   } else if (tag == NODE_IND) {
     struct node_ind *ind = (struct node_ind *)node;
-    ind->next = promote_node(g, ind->next);
+    ind->next = evacuate(g, ind->next, q);
   } else if (tag == NODE_DATA) {
     struct node_data *data = (struct node_data *)node;
     for (struct node_base **p = data->array; *p; p++) {
-      *p = promote_node(g, *p);
+      *p = evacuate(g, *p, q);
     }
   }
-  /* NODE_GLOBAL has no GC-managed children, nothing to scan. */
+  /* NODE_GLOBAL has no GC-managed children -- nothing to scavenge. */
 }
 
+/* -- Minor GC entry point ------------------------------------------------- */
+
 void minor_gc(struct gmachine *g) {
-  // Record boundary so we know which gc_nodes are newly promoted.
-  struct node_base *scanned_up_to = g->gc_nodes;
+  struct scan_queue queue;
+  queue_init(&queue);
 
-  /* Promote roots, every stack entry pointing into the minor
-   * heap gets a fresh copy in the major heap. */
+  /* Step 1: Evacuate roots -- every stack entry pointing into the
+   * minor heap gets copied to the major heap. */
   for (size_t i = 0; i < g->stack.count; i++) {
-    g->stack.data[i] = promote_node(g, g->stack.data[i]);
+    g->stack.data[i] = evacuate(g, g->stack.data[i], &queue);
   }
 
-  /* Iteratively scan promoted objects.  Each batch may cause
-   * further promotions, which are prepended to gc_nodes.  We keep
-   * scanning until no new objects appear. */
-  while (g->gc_nodes != scanned_up_to) {
-    struct node_base *batch_start = g->gc_nodes;
-    struct node_base *p = g->gc_nodes;
-    while (p != scanned_up_to) {
-      scan_promoted(g, p);
-      p = p->gc_next;
-    }
-    scanned_up_to = batch_start;
+  /* Step 2: Cheney scan loop.  Process evacuated objects in FIFO order.
+   * Each scavenge may evacuate more objects (appended to queue.count),
+   * so the loop naturally terminates when all transitive references
+   * have been processed.  This is a single O(N) pass. */
+  while (queue.scan < queue.count) {
+    scavenge(g, queue.data[queue.scan], &queue);
+    queue.scan++;
   }
 
-  /* Free the arrays of dead (non-forwarded) NODE_DATA objects.
+  queue_free(&queue);
+
+  /* Step 3: Free the arrays of dead (non-forwarded) NODE_DATA objects.
    * Walk the minor heap linearly from top (lowest alloc) to limit (end).
    * Each object's size is read from HDR_SIZE (preserved even after
    * forwarding was set in the upper bits). */
   {
-    uint8_t *scan = g->minor_heap.top;
-    while (scan < g->minor_heap.limit) {
-      struct node_base *obj = (struct node_base *)scan;
+    uint8_t *p = g->minor_heap.top;
+    while (p < g->minor_heap.limit) {
+      struct node_base *obj = (struct node_base *)p;
       size_t obj_size = HDR_SIZE(obj->header) * sizeof(uint64_t);
       assert(obj_size > 0 && "zero-size object in minor heap");
 
@@ -226,14 +276,14 @@ void minor_gc(struct gmachine *g) {
         free(data->array);
       }
 
-      scan += obj_size;
+      p += obj_size;
     }
   }
 
-  // Reset the minor heap, all live objects have been promoted.
+  /* Step 4: Reset the minor heap -- all live objects have been promoted. */
   g->minor_heap.top = g->minor_heap.limit;
 
-  // Trigger a major GC if the promotion pushed us past threshold.
+  /* Step 5: Trigger a major GC if promotion pushed us past threshold. */
   if (g->gc_node_count >= g->gc_node_threshold) {
     gmachine_gc(g);
     g->gc_node_threshold = g->gc_node_count * 2;
@@ -241,6 +291,7 @@ void minor_gc(struct gmachine *g) {
       g->gc_node_threshold = 128;
   }
 }
+
 
 // Major GC, Mark-and-Sweep over the major heap (gc_nodes list)
 
