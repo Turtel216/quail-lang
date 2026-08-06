@@ -164,10 +164,22 @@ void stack_alloc(struct stack *s, size_t o);
 void stack_pack(struct stack *s, size_t n, int8_t t);
 void stack_split(struct stack *s, size_t n);
 
+/* -- Remembered Set -------------------------------------------------------
+ * Tracks major-heap objects that contain pointers into the minor heap
+ * (cross-generational references).  These are treated as additional roots
+ * during minor GC so their minor-heap children get evacuated.
+ */
+struct remembered_set {
+  struct node_base **data;
+  size_t count;
+  size_t capacity;
+};
+
 /* -- G-Machine ------------------------------------------------------------ */
 struct gmachine {
   struct stack stack;
   struct minor_heap minor_heap;
+  struct remembered_set remembered_set;
   struct node_base *gc_nodes;     /* major heap intrusive linked list */
   int64_t gc_node_count;          /* number of major heap objects */
   int64_t gc_node_threshold;      /* major GC trigger threshold */

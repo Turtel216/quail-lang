@@ -116,6 +116,38 @@ struct node_ind *alloc_ind(struct gmachine *g, struct node_base *n) {
 }
 
 /* =========================================================================
+ * Remembered Set -- tracks cross-generational pointers
+ *
+ * When a major-heap object is mutated to point into the minor heap
+ * (e.g. gmachine_update rewrites a promoted node), we record it here.
+ * During minor GC these entries are treated as additional roots so
+ * their minor-heap children get evacuated.
+ * ========================================================================= */
+
+static void remembered_set_init(struct remembered_set *rs) {
+  rs->capacity = 16;
+  rs->count = 0;
+  rs->data = malloc(sizeof(struct node_base *) * rs->capacity);
+  assert(rs->data != NULL);
+}
+
+static void remembered_set_add(struct remembered_set *rs,
+                               struct node_base *n) {
+  if (rs->count >= rs->capacity) {
+    rs->capacity *= 2;
+    rs->data = realloc(rs->data, sizeof(struct node_base *) * rs->capacity);
+    assert(rs->data != NULL);
+  }
+  rs->data[rs->count++] = n;
+}
+
+static void remembered_set_free(struct remembered_set *rs) {
+  free(rs->data);
+  rs->data = NULL;
+  rs->count = 0;
+}
+
+/* =========================================================================
  * Minor GC -- Cheney's Stop-and-Copy Algorithm
  * =========================================================================
  *
@@ -249,7 +281,15 @@ void minor_gc(struct gmachine *g) {
     g->stack.data[i] = evacuate(g, g->stack.data[i], &queue);
   }
 
-  /* Step 2: Cheney scan loop.  Process evacuated objects in FIFO order.
+  /* Step 2: Scavenge remembered set entries -- major-heap objects that
+   * were mutated to point into the minor heap (write barrier).  Their
+   * child pointers are updated in-place via evacuate. */
+  for (size_t i = 0; i < g->remembered_set.count; i++) {
+    scavenge(g, g->remembered_set.data[i], &queue);
+  }
+  g->remembered_set.count = 0; /* clear -- all cross-gen refs resolved */
+
+  /* Step 3: Cheney scan loop.  Process evacuated objects in FIFO order.
    * Each scavenge may evacuate more objects (appended to queue.count),
    * so the loop naturally terminates when all transitive references
    * have been processed.  This is a single O(N) pass. */
@@ -394,11 +434,13 @@ void stack_popn(struct stack *s, size_t n) {
 void gmachine_init(struct gmachine *g) {
   stack_init(&g->stack);
 
-  // Allocate the minor heap region.
+  /* Allocate the minor heap region. */
   g->minor_heap.start = malloc(MINOR_HEAP_SIZE);
   assert(g->minor_heap.start != NULL && "failed to allocate minor heap");
   g->minor_heap.limit = g->minor_heap.start + MINOR_HEAP_SIZE;
-  g->minor_heap.top = g->minor_heap.limit; /* empty, grows downward */
+  g->minor_heap.top = g->minor_heap.limit; /* empty -- grows downward */
+
+  remembered_set_init(&g->remembered_set);
 
   g->gc_nodes = NULL;
   g->gc_node_count = 0;
@@ -408,14 +450,15 @@ void gmachine_init(struct gmachine *g) {
 void gmachine_free(struct gmachine *g) {
   stack_free(&g->stack);
 
-  /* Free the minor heap region.  Any surviving objects should have been
-   * promoted or discarded by now. */
+  /* Free the minor heap region. */
   free(g->minor_heap.start);
   g->minor_heap.start = NULL;
   g->minor_heap.top = NULL;
   g->minor_heap.limit = NULL;
 
-  // Free all major heap objects.
+  remembered_set_free(&g->remembered_set);
+
+  /* Free all major heap objects. */
   struct node_base *to_free = g->gc_nodes;
   struct node_base *next;
   while (to_free) {
@@ -436,10 +479,18 @@ void gmachine_update(struct gmachine *g, size_t o) {
   assert(g->stack.count > o + 1);
   struct node_ind *ind =
       (struct node_ind *)g->stack.data[g->stack.count - o - 2];
-  // Rewrite the node as an indirection, preserving the GC color. */
+  /* Rewrite the node as an indirection, preserving the GC color. */
   ind->base.header =
       MAKE_HEADER(NODE_IND, HDR_COLOR(ind->base.header), WORDS_NODE_IND);
   ind->next = g->stack.data[g->stack.count -= 1];
+
+  /* Write barrier: if a major-heap object now points into the minor heap,
+   * record it in the remembered set so the next minor GC can find and
+   * evacuate the target. */
+  if (!in_minor_heap(g, (struct node_base *)ind) &&
+      IS_PTR(ind->next) && in_minor_heap(g, ind->next)) {
+    remembered_set_add(&g->remembered_set, (struct node_base *)ind);
+  }
 }
 
 void gmachine_alloc(struct gmachine *g, size_t o) {
