@@ -175,11 +175,44 @@ struct remembered_set {
   size_t capacity;
 };
 
+/* -- GC State (Incremental Major GC) --------------------------------------
+ *
+ * The major GC runs incrementally in slices, interleaved with the mutator.
+ * A full cycle has two phases:
+ *
+ *   GC_MARK  -- incrementally trace reachable objects using an explicit
+ *               mark stack (grey set).  Objects transition WHITE -> GREY
+ *               -> BLACK.
+ *   GC_SWEEP -- incrementally walk the gc_nodes list, freeing WHITE
+ *               (unreachable) objects and resetting BLACK -> WHITE.
+ *
+ * Between slices the mutator may allocate, promote (minor GC), and
+ * mutate heap objects.  Correctness is maintained by:
+ *   - Write barrier in gmachine_update (insertion barrier)
+ *   - Darkening promoted objects' children during minor GC
+ */
+
+enum gc_phase { GC_IDLE = 0, GC_MARK = 1, GC_SWEEP = 2 };
+
+struct gc_state {
+  enum gc_phase phase;
+
+  /* Mark phase: explicit grey set (mark stack). */
+  struct node_base **mark_stack;
+  size_t mark_count;
+  size_t mark_capacity;
+
+  /* Sweep phase: cursor into gc_nodes list (pointer-to-pointer so we
+   * can unlink dead nodes in O(1)). */
+  struct node_base **sweep_ptr;
+};
+
 /* -- G-Machine ------------------------------------------------------------ */
 struct gmachine {
   struct stack stack;
   struct minor_heap minor_heap;
   struct remembered_set remembered_set;
+  struct gc_state gc_state;       /* incremental major GC state */
   struct node_base *gc_nodes;     /* major heap intrusive linked list */
   int64_t gc_node_count;          /* number of major heap objects */
   int64_t gc_node_threshold;      /* major GC trigger threshold */

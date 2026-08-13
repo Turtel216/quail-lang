@@ -269,6 +269,11 @@ static void scavenge(struct gmachine *g, struct node_base *node,
   /* NODE_GLOBAL has no GC-managed children -- nothing to scavenge. */
 }
 
+/* -- Forward declarations for incremental major GC ----------------------- */
+static void darken_children(struct gmachine *g, struct node_base *node);
+static void gc_start_cycle(struct gmachine *g);
+static void gc_slice(struct gmachine *g);
+
 /* -- Minor GC entry point ------------------------------------------------- */
 
 void minor_gc(struct gmachine *g) {
@@ -298,9 +303,23 @@ void minor_gc(struct gmachine *g) {
     queue.scan++;
   }
 
+  /* Step 4: If an incremental major GC cycle is active, protect promoted
+   * objects and their major-heap children from being incorrectly swept.
+   *   - During MARK: promoted objects are BLACK; WHITE major-heap children
+   *     are pushed GREY onto the mark stack so the marker will trace them.
+   *   - During SWEEP: promoted objects are BLACK; WHITE major-heap children
+   *     are also forced BLACK to survive the current sweep pass. */
+  if (g->gc_state.phase != GC_IDLE) {
+    for (size_t i = 0; i < queue.count; i++) {
+      struct node_base *obj = queue.data[i];
+      obj->header = HDR_SET_COLOR(obj->header, GC_BLACK);
+      darken_children(g, obj);
+    }
+  }
+
   queue_free(&queue);
 
-  /* Step 3: Free the arrays of dead (non-forwarded) NODE_DATA objects.
+  /* Step 5: Free the arrays of dead (non-forwarded) NODE_DATA objects.
    * Walk the minor heap linearly from top (lowest alloc) to limit (end).
    * Each object's size is read from HDR_SIZE (preserved even after
    * forwarding was set in the upper bits). */
@@ -320,78 +339,240 @@ void minor_gc(struct gmachine *g) {
     }
   }
 
-  /* Step 4: Reset the minor heap -- all live objects have been promoted. */
+  /* Step 6: Reset the minor heap -- all live objects have been promoted. */
   g->minor_heap.top = g->minor_heap.limit;
 
-  /* Step 5: Trigger a major GC if promotion pushed us past threshold. */
-  if (g->gc_node_count >= g->gc_node_threshold) {
-    gmachine_gc(g);
+  /* Step 7: If no major GC cycle is active and the threshold is exceeded,
+   * start a new incremental cycle.  Then do one slice of work regardless. */
+  if (g->gc_state.phase == GC_IDLE &&
+      g->gc_node_count >= g->gc_node_threshold) {
+    gc_start_cycle(g);
+  }
+  if (g->gc_state.phase != GC_IDLE) {
+    gc_slice(g);
+  }
+}
+
+
+/* =========================================================================
+ * Incremental Major GC -- Tri-Color Mark-and-Sweep
+ * =========================================================================
+ *
+ * The major GC runs in bounded-work slices, called once per minor GC.
+ * A full cycle has two phases:
+ *
+ *   MARK  -- Pop objects from the mark stack (grey set), trace their
+ *            children (push WHITE children as GREY), mark them BLACK.
+ *            When the mark stack is empty, transition to SWEEP.
+ *
+ *   SWEEP -- Walk the gc_nodes list with a cursor.  Free WHITE objects
+ *            (unreachable).  Reset BLACK objects to WHITE (ready for
+ *            the next cycle).  When the cursor reaches the end,
+ *            transition to IDLE.
+ *
+ * Correctness between slices is maintained by:
+ *   - Insertion barrier in gmachine_update:  if a BLACK object is
+ *     mutated during MARK phase, push it GREY for rescanning.
+ *   - Darkening in minor_gc:  promoted objects are BLACK; their WHITE
+ *     major-heap children are greyed (MARK) or blackened (SWEEP).
+ * ========================================================================= */
+
+#define MARK_SLICE_SIZE  256  /* objects per mark slice */
+#define SWEEP_SLICE_SIZE 256  /* objects per sweep slice */
+
+/* Free any external resources owned by a node (e.g. node_data's array). */
+static void free_node_direct(struct node_base *n) {
+  if (HDR_TAG(n->header) == NODE_DATA) {
+    free(((struct node_data *)n)->array);
+  }
+}
+
+/* -- GC State Lifecycle --------------------------------------------------- */
+
+static void gc_state_init(struct gc_state *s) {
+  s->phase = GC_IDLE;
+  s->mark_stack = NULL;
+  s->mark_count = 0;
+  s->mark_capacity = 0;
+  s->sweep_ptr = NULL;
+}
+
+static void gc_state_free(struct gc_state *s) {
+  free(s->mark_stack);
+  s->mark_stack = NULL;
+  s->mark_count = 0;
+  s->mark_capacity = 0;
+}
+
+/* -- Mark Stack ----------------------------------------------------------- */
+
+/* Push a node onto the mark stack and set its color to GREY. */
+static void gc_mark_push(struct gc_state *s, struct node_base *n) {
+  if (s->mark_count >= s->mark_capacity) {
+    s->mark_capacity = s->mark_capacity ? s->mark_capacity * 2 : 64;
+    s->mark_stack =
+        realloc(s->mark_stack, sizeof(struct node_base *) * s->mark_capacity);
+    assert(s->mark_stack != NULL);
+  }
+  n->header = HDR_SET_COLOR(n->header, GC_GREY);
+  s->mark_stack[s->mark_count++] = n;
+}
+
+/* -- Darken --------------------------------------------------------------- */
+
+/* Ensure a major-heap object is at least GREY during an active GC cycle.
+ * Called when a new reference to the object is discovered outside the
+ * normal mark traversal (e.g. via minor GC promotion or write barrier).
+ *
+ *   MARK phase  -> mark GREY and push onto mark stack (will be traced).
+ *   SWEEP phase -> force BLACK (survives current sweep pass). */
+static void darken(struct gmachine *g, struct node_base *n) {
+  if (IS_INT(n))
+    return;
+  if (in_minor_heap(g, n))
+    return;
+  if (HDR_COLOR(n->header) != GC_WHITE)
+    return;
+
+  if (g->gc_state.phase == GC_MARK) {
+    gc_mark_push(&g->gc_state, n);
+  } else if (g->gc_state.phase == GC_SWEEP) {
+    n->header = HDR_SET_COLOR(n->header, GC_BLACK);
+  }
+}
+
+/* Darken all GC-managed children of a node. */
+static void darken_children(struct gmachine *g, struct node_base *node) {
+  enum node_tag tag = HDR_TAG(node->header);
+  if (tag == NODE_APP) {
+    struct node_app *app = (struct node_app *)node;
+    darken(g, app->left);
+    darken(g, app->right);
+  } else if (tag == NODE_IND) {
+    struct node_ind *ind = (struct node_ind *)node;
+    darken(g, ind->next);
+  } else if (tag == NODE_DATA) {
+    struct node_data *data = (struct node_data *)node;
+    for (struct node_base **p = data->array; *p; p++) {
+      darken(g, *p);
+    }
+  }
+  /* NODE_GLOBAL has no GC-managed children. */
+}
+
+/* -- Cycle Start ---------------------------------------------------------- */
+
+/* Begin a new mark-sweep cycle.  Push all stack roots as GREY. */
+static void gc_start_cycle(struct gmachine *g) {
+  assert(g->gc_state.phase == GC_IDLE);
+  g->gc_state.phase = GC_MARK;
+
+  for (size_t i = 0; i < g->stack.count; i++) {
+    struct node_base *n = g->stack.data[i];
+    if (IS_PTR(n) && HDR_COLOR(n->header) == GC_WHITE) {
+      gc_mark_push(&g->gc_state, n);
+    }
+  }
+}
+
+/* -- Mark Slice ----------------------------------------------------------- */
+
+/* Process up to MARK_SLICE_SIZE objects from the mark stack.
+ * For each object: mark BLACK, trace children (push WHITE ones GREY).
+ * When the mark stack empties, transition to SWEEP. */
+static void gc_mark_slice(struct gmachine *g) {
+  struct gc_state *s = &g->gc_state;
+  size_t work = 0;
+
+  while (s->mark_count > 0 && work < MARK_SLICE_SIZE) {
+    struct node_base *n = s->mark_stack[--s->mark_count];
+    n->header = HDR_SET_COLOR(n->header, GC_BLACK);
+    work++;
+
+    enum node_tag tag = HDR_TAG(n->header);
+    if (tag == NODE_APP) {
+      struct node_app *app = (struct node_app *)n;
+      if (IS_PTR(app->left) && HDR_COLOR(app->left->header) == GC_WHITE)
+        gc_mark_push(s, app->left);
+      if (IS_PTR(app->right) && HDR_COLOR(app->right->header) == GC_WHITE)
+        gc_mark_push(s, app->right);
+    } else if (tag == NODE_IND) {
+      struct node_ind *ind = (struct node_ind *)n;
+      if (IS_PTR(ind->next) && HDR_COLOR(ind->next->header) == GC_WHITE)
+        gc_mark_push(s, ind->next);
+    } else if (tag == NODE_DATA) {
+      struct node_data *data = (struct node_data *)n;
+      for (struct node_base **p = data->array; *p; p++) {
+        if (IS_PTR(*p) && HDR_COLOR((*p)->header) == GC_WHITE)
+          gc_mark_push(s, *p);
+      }
+    }
+    /* NODE_GLOBAL: no children. */
+  }
+
+  /* If mark stack is empty, all reachable objects are BLACK.
+   * Transition to sweep phase. */
+  if (s->mark_count == 0) {
+    s->phase = GC_SWEEP;
+    s->sweep_ptr = &g->gc_nodes;
+  }
+}
+
+/* -- Sweep Slice ---------------------------------------------------------- */
+
+/* Process up to SWEEP_SLICE_SIZE nodes from the gc_nodes list.
+ * WHITE -> free (garbage).  BLACK -> reset to WHITE (survivor). */
+static void gc_sweep_slice(struct gmachine *g) {
+  struct gc_state *s = &g->gc_state;
+  size_t work = 0;
+
+  while (*s->sweep_ptr != NULL && work < SWEEP_SLICE_SIZE) {
+    struct node_base *n = *s->sweep_ptr;
+
+    if (HDR_COLOR(n->header) == GC_BLACK) {
+      /* Survived -- reset to WHITE for the next cycle. */
+      n->header = HDR_SET_COLOR(n->header, GC_WHITE);
+      s->sweep_ptr = &n->gc_next;
+    } else {
+      /* Unreachable (WHITE or stale GREY) -- free it. */
+      *s->sweep_ptr = n->gc_next;
+      free_node_direct(n);
+      free(n);
+      g->gc_node_count--;
+    }
+    work++;
+  }
+
+  /* If we reached the end of the list, the cycle is complete. */
+  if (*s->sweep_ptr == NULL) {
+    s->phase = GC_IDLE;
     g->gc_node_threshold = g->gc_node_count * 2;
     if (g->gc_node_threshold < 128)
       g->gc_node_threshold = 128;
   }
 }
 
+/* -- Slice Dispatch ------------------------------------------------------- */
 
-// Major GC, Mark-and-Sweep over the major heap (gc_nodes list)
-
-void free_node_direct(struct node_base *n) {
-  if (HDR_TAG(n->header) == NODE_DATA) {
-    free(((struct node_data *)n)->array);
+/* Do one bounded slice of major GC work (mark or sweep). */
+static void gc_slice(struct gmachine *g) {
+  if (g->gc_state.phase == GC_MARK) {
+    gc_mark_slice(g);
+  } else if (g->gc_state.phase == GC_SWEEP) {
+    gc_sweep_slice(g);
   }
 }
 
-void gc_visit_node(struct node_base *n) {
-  // Tagged integers are not heap pointers, nothing to trace.
-  if (IS_INT(n))
-    return;
+/* -- Full GC (force complete cycle) --------------------------------------- */
 
-  // Already visited (GREY or BLACK), skip.
-  if (HDR_COLOR(n->header) != GC_WHITE)
-    return;
-
-  // Mark as BLACK (fully traced).
-  n->header = HDR_SET_COLOR(n->header, GC_BLACK);
-
-  enum node_tag tag = HDR_TAG(n->header);
-  if (tag == NODE_APP) {
-    struct node_app *app = (struct node_app *)n;
-    gc_visit_node(app->left);
-    gc_visit_node(app->right);
-  } else if (tag == NODE_IND) {
-    struct node_ind *ind = (struct node_ind *)n;
-    gc_visit_node(ind->next);
-  } else if (tag == NODE_DATA) {
-    struct node_data *data = (struct node_data *)n;
-    struct node_base **to_visit = data->array;
-    while (*to_visit) {
-      gc_visit_node(*to_visit);
-      to_visit++;
-    }
-  }
-}
-
+/* Run an entire mark-sweep cycle to completion.  Useful for shutdown
+ * or debugging.  Normal runtime uses gc_slice for incremental work. */
 void gmachine_gc(struct gmachine *g) {
-  // Mark phase: trace all roots on the stack.
-  for (size_t i = 0; i < g->stack.count; i++) {
-    gc_visit_node(g->stack.data[i]);
+  if (g->gc_state.phase == GC_IDLE) {
+    gc_start_cycle(g);
   }
-
-  // Sweep phase: free WHITE objects, reset BLACK -> WHITE for survivors.
-  struct node_base **head_ptr = &g->gc_nodes;
-  while (*head_ptr) {
-    if (HDR_COLOR((*head_ptr)->header) == GC_BLACK) {
-      // Survived, reset to WHITE for the next GC cycle.
-      (*head_ptr)->header = HDR_SET_COLOR((*head_ptr)->header, GC_WHITE);
-      head_ptr = &(*head_ptr)->gc_next;
-    } else {
-      // Unreachable (WHITE), free it.
-      struct node_base *to_free = *head_ptr;
-      *head_ptr = to_free->gc_next;
-      free_node_direct(to_free);
-      free(to_free);
-      g->gc_node_count--;
-    }
+  while (g->gc_state.phase != GC_IDLE) {
+    gc_slice(g);
   }
 }
 
@@ -441,6 +622,7 @@ void gmachine_init(struct gmachine *g) {
   g->minor_heap.top = g->minor_heap.limit; /* empty -- grows downward */
 
   remembered_set_init(&g->remembered_set);
+  gc_state_init(&g->gc_state);
 
   g->gc_nodes = NULL;
   g->gc_node_count = 0;
@@ -457,6 +639,7 @@ void gmachine_free(struct gmachine *g) {
   g->minor_heap.limit = NULL;
 
   remembered_set_free(&g->remembered_set);
+  gc_state_free(&g->gc_state);
 
   /* Free all major heap objects. */
   struct node_base *to_free = g->gc_nodes;
@@ -479,17 +662,29 @@ void gmachine_update(struct gmachine *g, size_t o) {
   assert(g->stack.count > o + 1);
   struct node_ind *ind =
       (struct node_ind *)g->stack.data[g->stack.count - o - 2];
+
+  /* Save the old GC color before rewriting the header. */
+  enum gc_color old_color = HDR_COLOR(ind->base.header);
+
   /* Rewrite the node as an indirection, preserving the GC color. */
-  ind->base.header =
-      MAKE_HEADER(NODE_IND, HDR_COLOR(ind->base.header), WORDS_NODE_IND);
+  ind->base.header = MAKE_HEADER(NODE_IND, old_color, WORDS_NODE_IND);
   ind->next = g->stack.data[g->stack.count -= 1];
 
-  /* Write barrier: if a major-heap object now points into the minor heap,
-   * record it in the remembered set so the next minor GC can find and
-   * evacuate the target. */
+  /* Write barrier (generational): if a major-heap object now points into
+   * the minor heap, record it in the remembered set so the next minor GC
+   * can find and evacuate the target. */
   if (!in_minor_heap(g, (struct node_base *)ind) &&
       IS_PTR(ind->next) && in_minor_heap(g, ind->next)) {
     remembered_set_add(&g->remembered_set, (struct node_base *)ind);
+  }
+
+  /* Write barrier (incremental): if we are in the MARK phase and the
+   * mutated object is BLACK (already traced), push it back as GREY so
+   * the marker will rescan it and discover the new child ind->next.
+   * This is an insertion barrier (Dijkstra-style). */
+  if (g->gc_state.phase == GC_MARK && old_color == GC_BLACK &&
+      !in_minor_heap(g, (struct node_base *)ind)) {
+    gc_mark_push(&g->gc_state, (struct node_base *)ind);
   }
 }
 
