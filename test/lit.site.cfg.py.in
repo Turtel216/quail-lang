@@ -7,6 +7,7 @@ config.quail_obj_root = "@CMAKE_BINARY_DIR@"
 config.qc_executable = "@QC_EXECUTABLE@"
 config.filecheck_executable = "@FILECHECK_EXECUTABLE@"
 config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
+config.quail_test_workdir = "@QUAIL_TEST_WORKDIR@"
 
 # Delegate to lit.cfg.py
 lit_config.load_config(config, os.path.join(config.quail_src_root, "test", "lit.cfg.py"))

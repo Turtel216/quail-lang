@@ -34,16 +34,12 @@ endif()
 
 set(QC_EXECUTABLE "${CMAKE_BINARY_DIR}/qc${CMAKE_EXECUTABLE_SUFFIX}")
 
-# Ensure prelude and runtime are accessible in binary test execution directories
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/e2e)
-
-file(CREATE_LINK ${CMAKE_SOURCE_DIR}/prelude ${CMAKE_BINARY_DIR}/prelude SYMBOLIC COPY_ON_ERROR)
-file(CREATE_LINK ${CMAKE_SOURCE_DIR}/prelude ${CMAKE_CURRENT_BINARY_DIR}/prelude SYMBOLIC COPY_ON_ERROR)
-file(CREATE_LINK ${CMAKE_SOURCE_DIR}/prelude ${CMAKE_CURRENT_BINARY_DIR}/e2e/prelude SYMBOLIC COPY_ON_ERROR)
-
-file(CREATE_LINK ${CMAKE_SOURCE_DIR}/runtime ${CMAKE_BINARY_DIR}/runtime SYMBOLIC COPY_ON_ERROR)
-file(CREATE_LINK ${CMAKE_SOURCE_DIR}/runtime ${CMAKE_CURRENT_BINARY_DIR}/runtime SYMBOLIC COPY_ON_ERROR)
-file(CREATE_LINK ${CMAKE_SOURCE_DIR}/runtime ${CMAKE_CURRENT_BINARY_DIR}/e2e/runtime SYMBOLIC COPY_ON_ERROR)
+# Create a single working directory for test execution that has the
+# prelude/ and runtime/ symlinks qc needs. All tests run from here.
+set(QUAIL_TEST_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}/workdir")
+file(MAKE_DIRECTORY ${QUAIL_TEST_WORKDIR})
+file(CREATE_LINK ${CMAKE_SOURCE_DIR}/prelude ${QUAIL_TEST_WORKDIR}/prelude SYMBOLIC COPY_ON_ERROR)
+file(CREATE_LINK ${CMAKE_SOURCE_DIR}/runtime ${QUAIL_TEST_WORKDIR}/runtime SYMBOLIC COPY_ON_ERROR)
 
 # Configure lit site config
 configure_file(
