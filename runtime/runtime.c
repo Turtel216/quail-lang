@@ -630,9 +630,15 @@ void gmachine_init(struct gmachine *g) {
 }
 
 void gmachine_free(struct gmachine *g) {
+  /* Flush all live minor-heap objects to the major heap.  This also
+   * frees the arrays of dead node_data objects in the minor heap and
+   * resets the heap to empty.  After this, all surviving objects are
+   * in the gc_nodes list and will be freed below. */
+  minor_gc(g);
+
   stack_free(&g->stack);
 
-  /* Free the minor heap region. */
+  /* Free the (now empty) minor heap region. */
   free(g->minor_heap.start);
   g->minor_heap.start = NULL;
   g->minor_heap.top = NULL;
@@ -663,11 +669,16 @@ void gmachine_update(struct gmachine *g, size_t o) {
   struct node_ind *ind =
       (struct node_ind *)g->stack.data[g->stack.count - o - 2];
 
-  /* Save the old GC color before rewriting the header. */
+  /* Save the old GC color and object size before rewriting the header.
+   * The original size must be preserved because the minor heap's linear
+   * scan (dead-array cleanup) uses HDR_SIZE to step between objects.
+   * Shrinking the size (e.g. node_app 4 words -> node_ind 3 words)
+   * would corrupt that scan. */
   enum gc_color old_color = HDR_COLOR(ind->base.header);
+  size_t old_size = HDR_SIZE(ind->base.header);
 
-  /* Rewrite the node as an indirection, preserving the GC color. */
-  ind->base.header = MAKE_HEADER(NODE_IND, old_color, WORDS_NODE_IND);
+  /* Rewrite the node as an indirection, preserving GC color and size. */
+  ind->base.header = MAKE_HEADER(NODE_IND, old_color, old_size);
   ind->next = g->stack.data[g->stack.count -= 1];
 
   /* Write barrier (generational): if a major-heap object now points into
