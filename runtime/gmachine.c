@@ -50,13 +50,19 @@ void gmachine_update(struct gmachine *g, size_t o) {
     struct node_base *value = stack_pop(s);
     struct node_ind *ind = (struct node_ind *)stack_peek(s, o);
 
+    /* The redex is rewritten in place, so whatever it used to be is now
+     * unreachable through it -- release anything it owned.  A data node's
+     * field array would otherwise be orphaned here. */
+    node_free_resources(&ind->base);
+
     /* The node keeps its original size.  The minor heap is walked linearly
      * using the size field, so shrinking it here (an application is four
      * words, an indirection three) would desynchronise that walk.  The color
      * is preserved because the collector's invariants are stated in terms of
-     * it; the write barrier below needs the value it had. */
+     * it, and the write barrier below needs the value it had. */
     enum gc_color color = node_color(&ind->base);
-    ind->base.header = hdr_make(NODE_IND, color, hdr_size_words(ind->base.header));
+    ind->base.header =
+        hdr_make(NODE_IND, color, hdr_size_words(ind->base.header));
     ind->next = value;
 
     gc_write_barrier(g, &ind->base, color);

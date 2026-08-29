@@ -15,6 +15,14 @@ enum { GC_MARK_SLICE = 256, GC_SWEEP_SLICE = 256 };
 /* Smallest major heap the collector will bother shrinking the trigger to. */
 enum { GC_MIN_THRESHOLD = 128 };
 
+/* True for a value the next minor GC will have to relocate.  The heap-pointer
+ * test must come first: a tagged integer is not an address, but nothing stops
+ * its bit pattern from falling inside the minor heap's range. */
+static inline int gc_is_minor_ptr(const struct gmachine *g,
+                                  const struct node_base *v) {
+    return node_is_heap_ptr(v) && minor_heap_contains(&g->minor_heap, v);
+}
+
 /* =========================================================================
  * Major heap bookkeeping
  * ========================================================================= */
@@ -69,7 +77,7 @@ void gc_free_all(struct gmachine *g) {
  * earlier in this collection. */
 static struct node_base *evacuate(struct gmachine *g, struct node_base *n,
                                   struct node_vec *queue) {
-    if (!node_is_heap_ptr(n) || !minor_heap_contains(&g->minor_heap, n)) {
+    if (!gc_is_minor_ptr(g, n)) {
         return n;
     }
     if (hdr_is_fwd(n->header)) {
@@ -224,7 +232,7 @@ static void gc_grey(struct gc_state *s, struct node_base *n) {
  *   SWEEP  blacken it, so it survives the pass the cursor is already making.
  *          Marking is finished by then, so there are no children to trace. */
 static void gc_darken(struct gmachine *g, struct node_base *n) {
-    if (!node_is_white_ptr(n) || minor_heap_contains(&g->minor_heap, n)) {
+    if (!node_is_white_ptr(n) || gc_is_minor_ptr(g, n)) {
         return;
     }
 
@@ -247,7 +255,7 @@ static void gc_darken_children(struct gmachine *g, struct node_base *node) {
 
 void gc_write_barrier(struct gmachine *g, struct node_base *obj,
                       enum gc_color old_color) {
-    int obj_in_minor = minor_heap_contains(&g->minor_heap, obj);
+    int obj_in_minor = gc_is_minor_ptr(g, obj);
 
     /* Generational barrier: a major-heap object pointing into the minor heap
      * is a root for the next minor GC, which would otherwise never look at
@@ -259,7 +267,7 @@ void gc_write_barrier(struct gmachine *g, struct node_base *obj,
 
         node_children_begin(&it, obj);
         while ((slot = node_children_next(&it)) != NULL) {
-            if (minor_heap_contains(&g->minor_heap, *slot)) {
+            if (gc_is_minor_ptr(g, *slot)) {
                 node_vec_push(&g->remembered_set, obj);
                 break;
             }

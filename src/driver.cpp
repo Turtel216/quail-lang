@@ -113,10 +113,25 @@ void generateLLVM(
   outputLLVM(generator, outputFile);
 }
 
+/* Translation units making up the runtime, compiled fresh on every link.
+ * Keep in sync with the contents of runtime/ -- runtime.h documents how the
+ * pieces fit together. */
+static const char *const runtimeSources[] = {
+    "eval.c", "gc.c", "gmachine.c", "heap.c",
+    "main.c", "panic.c", "stack.c",  "vec.c",
+};
+
 void linkToRuntime(const std::string &output) {
-  std::string command =
-      "gcc -g -no-pie ./runtime/runtime.c object.o -o" + output;
-  std::system(command.c_str());
+  std::string command = "gcc -std=c11 -g -no-pie";
+  for (const char *source : runtimeSources) {
+    command += " ./runtime/";
+    command += source;
+  }
+  command += " object.o -o" + output;
+
+  if (std::system(command.c_str()) != 0) {
+    throw ff::DebugError("linkToRuntime error");
+  }
 }
 
 void cleanUp(const std::string &objectFile) {
