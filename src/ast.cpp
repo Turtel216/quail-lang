@@ -13,6 +13,24 @@ void printIndent(int n, std::ostream &to) {
     to << "  ";
 }
 
+namespace {
+
+/* What a lifted definition looks like from the outside: the new global
+ * applied to each of the variables it captured, in the same order they were
+ * prepended to its parameter list. */
+std::unique_ptr<Ast> partialApplication(const DefinitionDefn &definition) {
+  std::unique_ptr<Ast> application(new AstLid(definition.mangledName));
+
+  for (auto &captured : definition.capturedVariables) {
+    application = std::unique_ptr<Ast>(new AstApp(
+        std::move(application), std::unique_ptr<Ast>(new AstLid(captured))));
+  }
+
+  return application;
+}
+
+} // namespace
+
 // ############ Asts ############
 
 void AstInt::findFree(ff::sem::TypeManager &,
@@ -26,12 +44,13 @@ std::shared_ptr<ff::sem::Type> AstInt::typecheck(ff::sem::TypeManager &) {
       new ff::sem::TypeApp(typeContext->lookupType("Int")));
 }
 
+void AstInt::translate(GlobalScope &) {}
+
 void AstLid::findFree(ff::sem::TypeManager &,
                       std::shared_ptr<ff::sem::TypeContext> &typeCtx,
                       std::set<std::string> &into) {
   this->typeContext = typeCtx;
-  if (typeCtx->lookup(id) == nullptr)
-    into.insert(id);
+  into.insert(id);
 }
 
 void AstInt::generate(
@@ -47,8 +66,10 @@ void AstInt::print(int indent, std::ostream &to) const {
 }
 
 std::shared_ptr<ff::sem::Type> AstLid::typecheck(ff::sem::TypeManager &mgr) {
-  return typeContext->lookup(id)->instantiate(mgr);
+  return typeContext->lookup(id)->scheme->instantiate(mgr);
 }
+
+void AstLid::translate(GlobalScope &) {}
 
 void AstLid::generate(
     const std::shared_ptr<ff::ir::Enviroment> &env,
@@ -65,7 +86,7 @@ void AstLid::print(int indent, std::ostream &to) const {
 }
 
 std::shared_ptr<ff::sem::Type> AstUid::typecheck(ff::sem::TypeManager &mgr) {
-  return typeContext->lookup(id)->instantiate(mgr);
+  return typeContext->lookup(id)->scheme->instantiate(mgr);
 }
 
 void AstUid::findFree(ff::sem::TypeManager &,
@@ -73,6 +94,8 @@ void AstUid::findFree(ff::sem::TypeManager &,
                       std::set<std::string> &) {
   this->typeContext = typeCtx;
 }
+
+void AstUid::translate(GlobalScope &) {}
 
 void AstUid::generate(
     const std::shared_ptr<ff::ir::Enviroment> &,
@@ -89,10 +112,11 @@ void AstUid::print(int indent, std::ostream &to) const {
 std::shared_ptr<ff::sem::Type> AstBinop::typecheck(ff::sem::TypeManager &mgr) {
   auto ltype = left->typecheck(mgr);
   auto rtype = right->typecheck(mgr);
-  auto ftype = typeContext->lookup(opName(op))->instantiate(mgr);
-  if (!ftype)
+  auto opVariable = typeContext->lookup(opName(op));
+  if (!opVariable)
     throw ff::TypeError(std::string("unknown binary operator ") + opName(op));
 
+  auto ftype = opVariable->scheme->instantiate(mgr);
   auto returnType = mgr.newType();
   auto arrowOne =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(rtype, returnType));
@@ -109,6 +133,11 @@ void AstBinop::findFree(ff::sem::TypeManager &mgr,
   this->typeContext = typeCtx;
   left->findFree(mgr, typeCtx, into);
   right->findFree(mgr, typeCtx, into);
+}
+
+void AstBinop::translate(GlobalScope &scope) {
+  left->translate(scope);
+  right->translate(scope);
 }
 
 void AstBinop::generate(
@@ -151,6 +180,11 @@ void AstApp::findFree(ff::sem::TypeManager &mgr,
   right->findFree(mgr, typeCtx, into);
 }
 
+void AstApp::translate(GlobalScope &scope) {
+  left->translate(scope);
+  right->translate(scope);
+}
+
 void AstApp::generate(
     const std::shared_ptr<ff::ir::Enviroment> &env,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
@@ -177,7 +211,19 @@ void AstCase::findFree(ff::sem::TypeManager &mgr,
   for (auto &branch : branches) {
     auto newEnv = ff::sem::typeScope(typeCtx);
     branch->pattern->insertBindings(mgr, newEnv);
-    branch->expr->findFree(mgr, newEnv, into);
+
+    std::set<std::string> branchFree;
+    branch->expr->findFree(mgr, newEnv, branchFree);
+    branch->pattern->eraseBindings(branchFree);
+
+    into.insert(branchFree.begin(), branchFree.end());
+  }
+}
+
+void AstCase::translate(GlobalScope &scope) {
+  of->translate(scope);
+  for (auto &branch : branches) {
+    branch->expr->translate(scope);
   }
 }
 
@@ -254,8 +300,7 @@ void AstCase::generate(
           jumpInstruction->tagMappings.end())
         throw ff::TypeError("technically not a type error: duplicate pattern");
 
-      jumpInstruction->tagMappings[newTag] =
-          jumpInstruction->branches.size();
+      jumpInstruction->tagMappings[newTag] = jumpInstruction->branches.size();
       jumpInstruction->branches.push_back(std::move(branchInstructions));
     }
   }
@@ -278,6 +323,139 @@ void AstCase::print(int indent, std::ostream &to) const {
   }
 }
 
+std::shared_ptr<ff::sem::Type> AstLambda::typecheck(ff::sem::TypeManager &mgr) {
+  mgr.unify(returnType, body->typecheck(mgr));
+  return fullType;
+}
+
+void AstLambda::findFree(ff::sem::TypeManager &mgr,
+                         std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                         std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+
+  varContext = ff::sem::typeScope(typeCtx);
+  returnType = mgr.newType();
+  fullType = returnType;
+
+  for (auto it = params.rbegin(); it != params.rend(); it++) {
+    auto paramType = mgr.newType();
+    fullType = std::shared_ptr<ff::sem::Type>(
+        new ff::sem::TypeArr(paramType, fullType));
+    varContext->bind(*it, paramType);
+  }
+
+  body->findFree(mgr, varContext, freeVariables);
+  for (auto &param : params) {
+    freeVariables.erase(param);
+  }
+
+  into.insert(freeVariables.begin(), freeVariables.end());
+}
+
+void AstLambda::translate(GlobalScope &scope) {
+  lifted = std::unique_ptr<DefinitionDefn>(
+      new DefinitionDefn("lambda", params, std::move(body)));
+
+  lifted->visibility = ff::sem::Visibility::Local;
+  lifted->typeContext = typeContext;
+  lifted->freeVariables = freeVariables;
+  lifted->translate(scope);
+
+  translated = partialApplication(*lifted);
+}
+
+void AstLambda::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  translated->generate(env, into);
+}
+
+void AstLambda::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "LAMBDA:";
+  for (auto &param : params) {
+    to << " " << param;
+  }
+  to << std::endl;
+  body->print(indent + 1, to);
+}
+
+std::shared_ptr<ff::sem::Type> AstLet::typecheck(ff::sem::TypeManager &mgr) {
+  definitions->typecheck(mgr);
+  return in->typecheck(mgr);
+}
+
+void AstLet::findFree(ff::sem::TypeManager &mgr,
+                      std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                      std::set<std::string> &into) {
+  this->typeContext = ff::sem::typeScope(typeCtx);
+
+  definitions->findFree(mgr, this->typeContext, ff::sem::Visibility::Local,
+                        into);
+
+  std::set<std::string> bodyFree;
+  in->findFree(mgr, this->typeContext, bodyFree);
+  for (auto &pair : definitions->defsDefn) {
+    bodyFree.erase(pair.first);
+  }
+
+  into.insert(bodyFree.begin(), bodyFree.end());
+}
+
+void AstLet::translate(GlobalScope &scope) {
+  definitions->translate(scope);
+
+  for (auto &pair : definitions->defsDefn) {
+    bindings.push_back({pair.first, partialApplication(*pair.second)});
+  }
+
+  in->translate(scope);
+}
+
+void AstLet::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  std::shared_ptr<ff::ir::Enviroment> newEnv = env;
+  for (auto &binding : bindings) {
+    newEnv = std::shared_ptr<ff::ir::Enviroment>(
+        new ff::ir::EnviromentVar(binding.name, newEnv));
+  }
+
+  /* One placeholder indirection per binding, filled in below. Allocating
+   * them up front is what lets a binding refer to itself or to a sibling:
+   * the partial applications capture the placeholder nodes, and Update
+   * rewrites those same nodes in place. */
+  into.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Alloc(bindings.size())));
+
+  for (auto &binding : bindings) {
+    binding.value->generate(newEnv, into);
+    into.push_back(std::unique_ptr<ff::ir::Instruction>(
+        new ff::ir::Update(newEnv->getOffset(binding.name))));
+  }
+
+  in->generate(newEnv, into);
+  into.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Slide(bindings.size())));
+}
+
+void AstLet::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "LET:" << std::endl;
+  for (auto &pair : definitions->defsDefn) {
+    printIndent(indent + 1, to);
+    to << pair.first;
+    for (auto &param : pair.second->params) {
+      to << " " << param;
+    }
+    to << ":" << std::endl;
+    pair.second->body->print(indent + 2, to);
+  }
+  printIndent(indent, to);
+  to << "IN:" << std::endl;
+  in->print(indent + 1, to);
+}
+
 void PatternVar::print(std::ostream &to) const { to << var; }
 
 void PatternVar::insertBindings(
@@ -286,21 +464,26 @@ void PatternVar::insertBindings(
   typeCtx->bind(var, mgr.newType());
 }
 
+void PatternVar::eraseBindings(std::set<std::string> &from) const {
+  from.erase(var);
+}
+
 void PatternVar::typecheck(
     std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
     std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
-  mgr.unify(typeCtx->lookup(var)->instantiate(mgr), t);
+  mgr.unify(typeCtx->lookup(var)->scheme->instantiate(mgr), t);
 }
 
 void PatternConstr::typecheck(
     std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
     std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
-  auto constructorType = typeCtx->lookup(constr)->instantiate(mgr);
-  if (!constructorType) {
+  auto constructor = typeCtx->lookup(constr);
+  if (!constructor) {
     throw ff::TypeError(std::string("pattern using unknown constructor ") +
                         constr);
   }
 
+  auto constructorType = constructor->scheme->instantiate(mgr);
   for (auto &param : params) {
     ff::sem::TypeArr *arr =
         dynamic_cast<ff::sem::TypeArr *>(constructorType.get());
@@ -308,7 +491,7 @@ void PatternConstr::typecheck(
     if (!arr)
       throw ff::TypeError("too many parameters in constructor pattern");
 
-    mgr.unify(typeCtx->lookup(param)->instantiate(mgr), arr->getLeft());
+    mgr.unify(typeCtx->lookup(param)->scheme->instantiate(mgr), arr->getLeft());
     constructorType = arr->getRight();
   }
 
@@ -320,6 +503,12 @@ void PatternConstr::insertBindings(
     std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
   for (auto &param : this->params) {
     typeCtx->bind(param, mgr.newType());
+  }
+}
+
+void PatternConstr::eraseBindings(std::set<std::string> &from) const {
+  for (auto &param : this->params) {
+    from.erase(param);
   }
 }
 
@@ -348,15 +537,37 @@ void DefinitionDefn::findFree(ff::sem::TypeManager &mgr,
   }
 
   body->findFree(mgr, varContext, freeVariables);
+  for (auto &param : params) {
+    freeVariables.erase(param);
+  }
 }
 
 void DefinitionDefn::insertTypes(ff::sem::TypeManager &) {
-  typeContext->bind(name, fullType);
+  typeContext->bind(name, fullType, visibility);
 }
 
 void DefinitionDefn::typecheck(ff::sem::TypeManager &mgr) {
   auto bodyType = body->typecheck(mgr);
   mgr.unify(returnType, bodyType);
+}
+
+void DefinitionDefn::translate(GlobalScope &scope) {
+  body->translate(scope);
+
+  if (visibility == ff::sem::Visibility::Global)
+    return;
+
+  /* Only the names that live on the stack need capturing; a reference to a
+   * global is reached by name at any depth. */
+  for (auto &free : freeVariables) {
+    auto variable = typeContext->lookup(free);
+    if (variable && variable->visibility == ff::sem::Visibility::Local)
+      capturedVariables.insert(free);
+  }
+
+  params.insert(params.begin(), capturedVariables.begin(),
+                capturedVariables.end());
+  scope.add(*this);
 }
 
 void DefinitionDefn::compile() {
@@ -375,7 +586,8 @@ void DefinitionDefn::compile() {
 }
 
 void DefinitionDefn::declareLLVM(ff::cg::CodeGenerator &generator) {
-  generatedFunction = generator.createCustomFunction(name, params.size());
+  generatedFunction =
+      generator.createCustomFunction(mangledName, params.size());
 }
 
 void DefinitionDefn::generateLLVM(ff::cg::CodeGenerator &generator) {
@@ -431,7 +643,8 @@ void DefinitionData::insertConstructors() const {
     fullScheme->forall.insert(fullScheme->forall.begin(), vars.begin(),
                               vars.end());
 
-    typeContext->bind(constructor->name, fullScheme);
+    typeContext->bind(constructor->name, fullScheme,
+                      ff::sem::Visibility::Global);
   }
 }
 
@@ -455,4 +668,72 @@ void DefinitionData::generateLLVM(ff::cg::CodeGenerator &generator) {
 
     generator.builder.CreateRetVoid();
   }
+}
+
+// ############ Groups ############
+
+void DefinitionGroup::findFree(ff::sem::TypeManager &mgr,
+                               std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                               ff::sem::Visibility visibility,
+                               std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+
+  for (auto &defData : defsData) {
+    defData.second->insertTypes(typeCtx);
+  }
+  for (auto &defData : defsData) {
+    defData.second->insertConstructors();
+  }
+
+  ff::sem::FunctionGraph dependencyGraph;
+
+  for (auto &defDefn : defsDefn) {
+    defDefn.second->visibility = visibility;
+    defDefn.second->findFree(mgr, typeCtx);
+    dependencyGraph.addFunction(defDefn.second->name);
+
+    /* A reference to a sibling orders this group; anything else belongs to
+     * an enclosing scope and is passed further out. */
+    for (auto &free : defDefn.second->freeVariables) {
+      if (defsDefn.find(free) != defsDefn.end())
+        dependencyGraph.addEdge(defDefn.second->name, free);
+      else
+        into.insert(free);
+    }
+  }
+
+  groups = dependencyGraph.computeOrder();
+}
+
+void DefinitionGroup::typecheck(ff::sem::TypeManager &mgr) {
+  for (auto it = groups.rbegin(); it != groups.rend(); it++) {
+    auto &group = *it;
+    for (auto &defDefnName : group->members) {
+      defsDefn.find(defDefnName)->second->insertTypes(mgr);
+    }
+
+    for (auto &defDefnName : group->members) {
+      defsDefn.find(defDefnName)->second->typecheck(mgr);
+    }
+
+    for (auto &defDefnName : group->members) {
+      typeContext->generalize(defDefnName, group->members, mgr);
+    }
+  }
+}
+
+void DefinitionGroup::translate(GlobalScope &scope) {
+  for (auto &defDefn : defsDefn) {
+    defDefn.second->translate(scope);
+  }
+}
+
+void GlobalScope::add(DefinitionDefn &definition) {
+  /* The lexer cannot produce an identifier containing '_' or a digit, so a
+   * suffixed name never collides with a variable in scope where the lifted
+   * function is referenced -- which is the very scope that binds the name it
+   * was derived from. */
+  definition.mangledName =
+      definition.name + "_" + std::to_string(++occurences[definition.name]);
+  definitions.push_back(&definition);
 }
