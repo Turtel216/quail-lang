@@ -3,6 +3,7 @@
 #include "error.hpp"
 #include <algorithm>
 #include <memory>
+#include <utility>
 
 namespace ff {
 namespace sem {
@@ -168,7 +169,7 @@ void TypeVar::print(const TypeManager &mgr, std::ostream &to) const {
   }
 }
 
-void TypeBase::print(const TypeManager &mgr, std::ostream &to) const {
+void TypeBase::print(const TypeManager &, std::ostream &to) const {
   to << this->name;
 }
 
@@ -215,7 +216,7 @@ std::shared_ptr<Type> ParsedTypeApp::toType(const std::set<std::string> &vars,
   if (!(baseType = dynamic_cast<TypeBase *>(parentType.get())))
     throw ff::DebugError("Parded TypeApp base");
 
-  if (baseType->getArity() != arguments.size()) {
+  if (std::cmp_not_equal(baseType->getArity(), arguments.size())) {
     std::string arity = std::to_string(baseType->getArity());
     std::string argumentsSize = std::to_string(arguments.size());
     std::string output =
@@ -234,7 +235,7 @@ std::shared_ptr<Type> ParsedTypeApp::toType(const std::set<std::string> &vars,
 }
 
 std::shared_ptr<Type> ParsedTypeVar::toType(const std::set<std::string> &vars,
-                                            const TypeContext &typeCtx) const {
+                                            const TypeContext &) const {
   if (vars.find(var) == vars.end())
     throw ff::DebugError("PardedTypeVar");
 

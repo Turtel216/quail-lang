@@ -21,8 +21,8 @@ public:
 
   UnificationError(std::shared_ptr<ff::sem::Type> l,
                    std::shared_ptr<ff::sem::Type> r)
-      : left(std::move(l)), right(std::move(r)),
-        TypeError("failed to unify types") {}
+      : TypeError("failed to unify types"), left(std::move(l)),
+        right(std::move(r)) {}
 };
 
 class CliError : std::exception {

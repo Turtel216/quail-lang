@@ -15,18 +15,18 @@ void printIndent(int n, std::ostream &to) {
 
 // ############ Asts ############
 
-void AstInt::findFree(ff::sem::TypeManager &mgr,
+void AstInt::findFree(ff::sem::TypeManager &,
                       std::shared_ptr<ff::sem::TypeContext> &typeCtx,
-                      std::set<std::string> &into) {
+                      std::set<std::string> &) {
   this->typeContext = typeCtx;
 }
 
-std::shared_ptr<ff::sem::Type> AstInt::typecheck(ff::sem::TypeManager &mgr) {
+std::shared_ptr<ff::sem::Type> AstInt::typecheck(ff::sem::TypeManager &) {
   return std::shared_ptr<ff::sem::Type>(
       new ff::sem::TypeApp(typeContext->lookupType("Int")));
 }
 
-void AstLid::findFree(ff::sem::TypeManager &mgr,
+void AstLid::findFree(ff::sem::TypeManager &,
                       std::shared_ptr<ff::sem::TypeContext> &typeCtx,
                       std::set<std::string> &into) {
   this->typeContext = typeCtx;
@@ -35,7 +35,7 @@ void AstLid::findFree(ff::sem::TypeManager &mgr,
 }
 
 void AstInt::generate(
-    const std::shared_ptr<ff::ir::Enviroment> &env,
+    const std::shared_ptr<ff::ir::Enviroment> &,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
   into.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::PushInt(this->value)));
@@ -68,14 +68,14 @@ std::shared_ptr<ff::sem::Type> AstUid::typecheck(ff::sem::TypeManager &mgr) {
   return typeContext->lookup(id)->instantiate(mgr);
 }
 
-void AstUid::findFree(ff::sem::TypeManager &mgr,
+void AstUid::findFree(ff::sem::TypeManager &,
                       std::shared_ptr<ff::sem::TypeContext> &typeCtx,
-                      std::set<std::string> &into) {
+                      std::set<std::string> &) {
   this->typeContext = typeCtx;
 }
 
 void AstUid::generate(
-    const std::shared_ptr<ff::ir::Enviroment> &env,
+    const std::shared_ptr<ff::ir::Enviroment> &,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
   into.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::PushGlobal(this->id)));
@@ -350,7 +350,7 @@ void DefinitionDefn::findFree(ff::sem::TypeManager &mgr,
   body->findFree(mgr, varContext, freeVariables);
 }
 
-void DefinitionDefn::insertTypes(ff::sem::TypeManager &mgr) {
+void DefinitionDefn::insertTypes(ff::sem::TypeManager &) {
   typeContext->bind(name, fullType);
 }
 

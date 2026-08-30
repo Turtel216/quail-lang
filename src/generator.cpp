@@ -7,8 +7,10 @@ namespace cg {
 void CodeGenerator::createTypes() {
   this->stackType = llvm::StructType::create(this->ctx, "stack");
   this->gmachineType = llvm::StructType::create(this->ctx, "gmachine");
-  this->stackPointerType = llvm::PointerType::getUnqual(this->stackType);
-  this->gmachinePtrType = llvm::PointerType::getUnqual(this->gmachineType);
+  /* Opaque pointers: every pointee spells the same `ptr` type, so the
+   * context overload is the non-deprecated way to name it. */
+  this->stackPointerType = llvm::PointerType::getUnqual(this->ctx);
+  this->gmachinePtrType = llvm::PointerType::getUnqual(this->ctx);
   this->tagType = llvm::IntegerType::getInt8Ty(this->ctx);
 
   this->structTypes["node_base"] =
@@ -23,7 +25,7 @@ void CodeGenerator::createTypes() {
   this->structTypes["node_data"] =
       llvm::StructType::create(this->ctx, "node_data");
 
-  this->nodePtrType = llvm::PointerType::getUnqual(structTypes.at("node_base"));
+  this->nodePtrType = llvm::PointerType::getUnqual(this->ctx);
   this->functionType = llvm::FunctionType::get(llvm::Type::getVoidTy(this->ctx),
                                                {this->gmachinePtrType}, false);
   this->gmachineType->setBody(this->stackPointerType, this->nodePtrType);
@@ -48,7 +50,7 @@ void CodeGenerator::createTypes() {
    * so the struct is just {node_base, node_base**}. */
   this->structTypes.at("node_data")
       ->setBody({this->structTypes.at("node_base"),
-                 llvm::PointerType::getUnqual(this->nodePtrType)});
+                 llvm::PointerType::getUnqual(this->ctx)});
 }
 
 void CodeGenerator::createFunctions() {
@@ -281,12 +283,12 @@ llvm::Value *CodeGenerator::createApp(llvm::Function *f, llvm::Value *l,
 
 llvm::Function *CodeGenerator::createCustomFunction(std::string name,
                                                     std::int32_t arity) {
-  auto voidType = llvm::Type::getVoidTy(this->ctx);
   auto newFunction = llvm::Function::Create(
       this->functionType, llvm::Function::LinkageTypes::ExternalLinkage,
       "f_" + name, &this->module);
 
-  auto startBlock = llvm::BasicBlock::Create(ctx, "entry", newFunction);
+  /* Created for its side effect: the entry block is attached to newFunction. */
+  llvm::BasicBlock::Create(ctx, "entry", newFunction);
 
   auto newCustome = std::unique_ptr<CustomFunction>(new CustomFunction());
 

@@ -74,7 +74,7 @@ void FunctionGraph::createEdges(
 }
 
 std::vector<std::unique_ptr<Group>> FunctionGraph::generateOrder(
-    std::map<function, groupId> &groupIds,
+    std::map<function, groupId> &,
     std::map<groupId, std::shared_ptr<GroupData>> &groupDataMap) {
   std::queue<groupId> idQueue;
   std::vector<std::unique_ptr<Group>> output;

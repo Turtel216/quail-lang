@@ -79,6 +79,12 @@ set(SRC_FILES
 # Main executable
 add_executable(qc ${SRC_FILES})
 
+set_property(TARGET qc PROPERTY COMPILE_WARNING_AS_ERROR ON)
+
+target_compile_options(qc PRIVATE
+    -Wall -Wextra -Wpedantic
+)
+
 target_link_libraries(qc
     PRIVATE
         parser
