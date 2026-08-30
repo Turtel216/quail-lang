@@ -87,26 +87,32 @@ void outputLLVM(ff::cg::CodeGenerator &generator,
   }
 }
 
-void generateLLVM(
-    const std::map<std::string, std::unique_ptr<DefinitionData>> &defsData,
-    const std::map<std::string, std::unique_ptr<DefinitionDefn>> &defsDefn,
-    const std::string &outputFile) {
+void generateLLVM(DefinitionGroup &program, const GlobalScope &scope,
+                  const std::string &outputFile) {
   ff::cg::CodeGenerator generator;
   generateLLVMInternalOp(generator, PLUS);
   generateLLVMInternalOp(generator, MINUS);
   generateLLVMInternalOp(generator, TIMES);
   generateLLVMInternalOp(generator, DIVIDE);
 
-  for (auto &defData : defsData) {
+  for (auto &defData : program.defsData) {
     defData.second->generateLLVM(generator);
   }
 
-  for (auto &defDefn : defsDefn) {
+  /* Every function must be declared before any body is generated: a body
+   * reaches its callees by name, and lifting mixes the two sets freely. */
+  for (auto &defDefn : program.defsDefn) {
     defDefn.second->declareLLVM(generator);
   }
+  for (auto *definition : scope.getDefinitions()) {
+    definition->declareLLVM(generator);
+  }
 
-  for (auto &defDefn : defsDefn) {
+  for (auto &defDefn : program.defsDefn) {
     defDefn.second->generateLLVM(generator);
+  }
+  for (auto *definition : scope.getDefinitions()) {
+    definition->generateLLVM(generator);
   }
 
   generator.module.print(llvm::outs(), nullptr);
@@ -117,8 +123,8 @@ void generateLLVM(
  * Keep in sync with the contents of runtime/ -- runtime.h documents how the
  * pieces fit together. */
 static const char *const runtimeSources[] = {
-    "eval.c", "gc.c", "gmachine.c", "heap.c",
-    "main.c", "panic.c", "stack.c",  "vec.c",
+    "eval.c", "gc.c",    "gmachine.c", "heap.c",
+    "main.c", "panic.c", "stack.c",    "vec.c",
 };
 
 void linkToRuntime(const std::string &output) {
@@ -139,11 +145,8 @@ void cleanUp(const std::string &objectFile) {
   std::system(command.c_str());
 }
 
-void typecheckProgram(
-    const std::map<std::string, std::unique_ptr<DefinitionData>> &defsData,
-    const std::map<std::string, std::unique_ptr<DefinitionDefn>> &defsDefn,
-    ff::sem::TypeManager &mgr,
-    std::shared_ptr<ff::sem::TypeContext> &typeContext) {
+void typecheckProgram(DefinitionGroup &program, ff::sem::TypeManager &mgr,
+                      std::shared_ptr<ff::sem::TypeContext> &typeContext) {
   auto intType = std::shared_ptr<ff::sem::Type>(new ff::sem::TypeBase("Int"));
   typeContext->bindType("Int", intType);
   std::shared_ptr<ff::sem::Type> intTypeApp =
@@ -153,69 +156,54 @@ void typecheckProgram(
       intTypeApp, std::shared_ptr<ff::sem::Type>(
                       new ff::sem::TypeArr(intTypeApp, intTypeApp))));
 
-  typeContext->bind("+", binopType);
-  typeContext->bind("-", binopType);
-  typeContext->bind("*", binopType);
-  typeContext->bind("/", binopType);
+  typeContext->bind("+", binopType, ff::sem::Visibility::Global);
+  typeContext->bind("-", binopType, ff::sem::Visibility::Global);
+  typeContext->bind("*", binopType, ff::sem::Visibility::Global);
+  typeContext->bind("/", binopType, ff::sem::Visibility::Global);
 
-  for (auto &defData : defsData) {
-    defData.second->insertTypes(typeContext);
-  }
-  for (auto &defData : defsData) {
-    defData.second->insertConstructors();
-  }
+  std::set<std::string> freeVariables;
+  program.findFree(mgr, typeContext, ff::sem::Visibility::Global,
+                   freeVariables);
 
-  ff::sem::FunctionGraph dependencyGraph;
-
-  for (auto &defDefn : defsDefn) {
-    defDefn.second->findFree(mgr, typeContext);
-    dependencyGraph.addFunction(defDefn.second->name);
-
-    for (auto &dependency : defDefn.second->freeVariables) {
-      if (defsDefn.find(dependency) == defsDefn.end())
-        throw ff::DebugError("typecheckProgram Error\n");
-
-      dependencyGraph.addEdge(defDefn.second->name, dependency);
-    }
+  /* Nothing encloses the top level, so anything still free here that is not
+   * already bound -- a constructor, an operator -- has no definition. */
+  for (auto &free : freeVariables) {
+    if (typeContext->lookup(free) == nullptr)
+      throw ff::TypeError("undefined variable " + free);
   }
 
-  std::vector<std::unique_ptr<ff::sem::Group>> groups =
-      dependencyGraph.computeOrder();
-
-  for (auto it = groups.rbegin(); it != groups.rend(); it++) {
-    auto &group = *it;
-    for (auto &defDefnName : group->members) {
-      auto &defDefn = defsDefn.find(defDefnName)->second;
-      defDefn->insertTypes(mgr);
-    }
-
-    for (auto &defDefnName : group->members) {
-      auto &defDefn = defsDefn.find(defDefnName)->second;
-      defDefn->typecheck(mgr);
-    }
-
-    for (auto &defDefnName : group->members) {
-      typeContext->generalize(defDefnName, mgr);
-    }
-  }
+  program.typecheck(mgr);
 
   for (auto &pair : typeContext->getNames()) {
     std::cout << pair.first << ": ";
-    pair.second->print(mgr, std::cout);
+    pair.second->scheme->print(mgr, std::cout);
     std::cout << std::endl;
   }
 }
 
-void compileProgram(
-    const std::map<std::string, std::unique_ptr<DefinitionDefn>> &defsDefn) {
-  for (auto &defDefn : defsDefn) {
-    defDefn.second->compile();
+void translateProgram(DefinitionGroup &program, GlobalScope &scope) {
+  program.translate(scope);
+}
 
-    for (auto &instruction : defDefn.second->instructions) {
-      instruction->print(0, std::cout);
-    }
+namespace {
+void compileDefinition(DefinitionDefn &definition) {
+  definition.compile();
 
-    std::cout << std::endl;
+  for (auto &instruction : definition.instructions) {
+    instruction->print(0, std::cout);
+  }
+
+  std::cout << std::endl;
+}
+} // namespace
+
+void compileProgram(DefinitionGroup &program, const GlobalScope &scope) {
+  for (auto &defDefn : program.defsDefn) {
+    compileDefinition(*defDefn.second);
+  }
+
+  for (auto *definition : scope.getDefinitions()) {
+    compileDefinition(*definition);
   }
 }
 

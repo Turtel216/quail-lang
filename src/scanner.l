@@ -19,6 +19,9 @@ fun { return yy::parser::make_DEFN(); }
 type { return yy::parser::make_DATA(); }
 match { return yy::parser::make_CASE(); }
 with { return yy::parser::make_OF(); }
+let { return yy::parser::make_LET(); }
+in { return yy::parser::make_IN(); }
+\\ { return yy::parser::make_LAMBDA(); }
 \{ { return yy::parser::make_OCURLY(); }
 \} { return yy::parser::make_CCURLY(); }
 \( { return yy::parser::make_OPAREN(); }

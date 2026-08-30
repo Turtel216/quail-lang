@@ -177,6 +177,10 @@ void Eval::print(int indent, std::ostream &to) const {
   to << "Eval()" << std::endl;
 }
 
+void Alloc::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
+  generator.createAlloc(f, generator.createSize(this->amount));
+}
+
 void Alloc::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
   to << "Alloc(" << amount << ")" << std::endl;

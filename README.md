@@ -63,6 +63,44 @@ fun add x y = {
 
 ```
 
+### Lambdas
+
+Anonymous functions are written with a backslash, a parameter list, and a
+braced body. They may capture variables from the enclosing scope:
+
+```quail
+fun sum l = { foldr (\x acc -> { x + acc }) 0 l }
+
+fun addToAll n l = { map (\x -> { n + x }) l }
+```
+
+### Let/In
+
+`let` introduces local definitions visible only inside its `in` block. Each
+binding is an ordinary `fun` definition, so it may take parameters, and it may
+be recursive or mutually recursive with its siblings:
+
+```quail
+fun main = {
+    let {
+        fun square x = { x * x }
+        fun total l = {
+            match l with {
+                Nil -> { 0 }
+                Cons x xs -> { square x + total xs }
+            }
+        }
+    } in {
+        total (Cons 1 (Cons 2 (Cons 3 Nil)))
+    }
+}
+```
+
+Both lambdas and `let` bindings are lambda-lifted: the compiler turns each one
+into a global function that takes its captured variables as extra parameters,
+and leaves a partial application behind at the original site. `let` bindings
+are also generalized, so a binding used at two different types type-checks.
+
 ## Building from Source
 
 The Quail compiler (`qc`) is built using CMake. You will need a C++ compiler that supports C++23 (or later), LLVM development libraries, Flex, and Bison.

@@ -18,7 +18,11 @@ std::string TypeManager::newTypeName() noexcept {
   }
 
   std::reverse(str.begin(), str.end());
-  return str;
+
+  /* Quoted so a fresh variable can never collide with one the program wrote
+   * itself: the lexer cannot produce an identifier containing a quote, and
+   * both kinds are looked up by name in the same substitution map. */
+  return "'" + str;
 }
 
 std::shared_ptr<Type> TypeManager::substitute(

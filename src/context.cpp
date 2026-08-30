@@ -4,7 +4,7 @@
 
 namespace ff {
 namespace sem {
-std::shared_ptr<TypeScheme> TypeContext::lookup(const std::string &name) const {
+std::shared_ptr<Variable> TypeContext::lookup(const std::string &name) const {
   auto it = this->names.find(name);
   if (it != this->names.end())
     return it->second;
@@ -32,29 +32,61 @@ void TypeContext::bindType(const std::string &typeName,
   typeNames[typeName] = t;
 }
 
-void TypeContext::bind(const std::string &name, std::shared_ptr<Type> t) {
-  this->names[name] = std::shared_ptr<TypeScheme>(new TypeScheme(t));
+void TypeContext::bind(const std::string &name, std::shared_ptr<Type> t,
+                       Visibility visibility) {
+  bind(name, std::shared_ptr<TypeScheme>(new TypeScheme(std::move(t))),
+       visibility);
 }
 
-void TypeContext::bind(const std::string &name, std::shared_ptr<TypeScheme> t) {
-  names[name] = t;
+void TypeContext::bind(const std::string &name, std::shared_ptr<TypeScheme> t,
+                       Visibility visibility) {
+  names[name] =
+      std::shared_ptr<Variable>(new Variable(std::move(t), visibility));
 }
 
 std::shared_ptr<TypeContext> typeScope(std::shared_ptr<TypeContext> parent) {
   return std::shared_ptr<TypeContext>(new TypeContext(std::move(parent)));
 }
 
-void TypeContext::generalize(const std::string &name, TypeManager &mgr) {
+void TypeContext::findFree(TypeManager &mgr,
+                           const std::set<std::string> &except,
+                           std::set<std::string> &into) const {
+  for (auto &pair : names) {
+    if (except.find(pair.first) != except.end())
+      continue;
+
+    std::set<std::string> freeVariables;
+    mgr.findFree(pair.second->scheme->monotype, freeVariables);
+
+    /* Quantified variables are replaced on every instantiation, so they
+     * constrain nothing here. */
+    for (auto &quantified : pair.second->scheme->forall)
+      freeVariables.erase(quantified);
+
+    into.insert(freeVariables.begin(), freeVariables.end());
+  }
+
+  if (parent)
+    parent->findFree(mgr, except, into);
+}
+
+void TypeContext::generalize(const std::string &name,
+                             const std::set<std::string> &except,
+                             TypeManager &mgr) {
   auto namesIt = names.find(name);
   if (namesIt == names.end())
     throw ff::DebugError("TypeContext generalize error");
-  if (namesIt->second->forall.size() > 0)
+  if (namesIt->second->scheme->forall.size() > 0)
     throw ff::DebugError("TypeContext generalize error");
 
+  std::set<std::string> boundVariables;
+  findFree(mgr, except, boundVariables);
+
   std::set<std::string> freeVariables;
-  mgr.findFree(namesIt->second->monotype, freeVariables);
+  mgr.findFree(namesIt->second->scheme->monotype, freeVariables);
   for (auto &free : freeVariables) {
-    namesIt->second->forall.push_back(free);
+    if (boundVariables.find(free) == boundVariables.end())
+      namesIt->second->scheme->forall.push_back(free);
   }
 }
 } // namespace sem

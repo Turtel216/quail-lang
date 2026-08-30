@@ -5,8 +5,7 @@
 #include "../include/parsed_type.hpp"
 #include "parser.hpp"
 
-std::map<std::string, std::unique_ptr<DefinitionData>> defsData;
-std::map<std::string, std::unique_ptr<DefinitionDefn>> defsDefn;
+DefinitionGroup program;
 extern yy::parser::symbol_type yylex();
 
 
@@ -28,6 +27,9 @@ extern yy::parser::symbol_type yylex();
 %token COMMA
 %token ARROW
 %token EQUAL
+%token LET
+%token IN
+%token LAMBDA
 %token <std::string> LID
 %token <std::string> UID
 
@@ -39,9 +41,10 @@ extern yy::parser::symbol_type yylex();
 %type <std::vector<std::string>> lowercaseParams uppercaseParams
 %type <std::vector<std::unique_ptr<Branch>>> branches
 %type <std::vector<std::unique_ptr<Constructor>>> constructors
-%type <std::unique_ptr<Ast>> aAdd aMul case app appBase
+%type <std::unique_ptr<Ast>> aAdd aMul case lambda let app appBase
 %type <std::unique_ptr<DefinitionData>> data
-%type <std::unique_ptr<DefinitionDefn>> defn 
+%type <std::unique_ptr<DefinitionDefn>> defn
+%type <std::unique_ptr<DefinitionGroup>> letDefinitions
 %type <std::unique_ptr<Branch>> branch
 %type <std::unique_ptr<Pattern>> pattern
 %type <std::unique_ptr<Constructor>> constructor
@@ -62,8 +65,8 @@ definitions
     ;
 
 definition
-    : defn { auto name = $1->name; defsDefn[name] = std::move($1); }
-    | data { auto name = $1->name; defsData[name] = std::move($1); }
+    : defn { auto name = $1->name; program.defsDefn[name] = std::move($1); }
+    | data { auto name = $1->name; program.defsData[name] = std::move($1); }
     ;
 
 defn
@@ -105,11 +108,31 @@ appBase
     | UID { $$ = std::unique_ptr<Ast>(new AstUid(std::move($1))); }
     | OPAREN aAdd CPAREN { $$ = std::move($2); }
     | case { $$ = std::move($1); }
+    | lambda { $$ = std::move($1); }
+    | let { $$ = std::move($1); }
     ;
 
 case
     : CASE aAdd OF OCURLY branches CCURLY 
         { $$ = std::unique_ptr<Ast>(new AstCase(std::move($2), std::move($5))); }
+    ;
+
+lambda
+    : LAMBDA lowercaseParams ARROW OCURLY aAdd CCURLY
+        { $$ = std::unique_ptr<Ast>(new AstLambda(std::move($2), std::move($5))); }
+    ;
+
+let
+    : LET OCURLY letDefinitions CCURLY IN OCURLY aAdd CCURLY
+        { $$ = std::unique_ptr<Ast>(new AstLet(std::move($3), std::move($7))); }
+    ;
+
+letDefinitions
+    : letDefinitions defn
+        { $$ = std::move($1); auto name = $2->name; $$->defsDefn[name] = std::move($2); }
+    | defn
+        { $$ = std::unique_ptr<DefinitionGroup>(new DefinitionGroup());
+          auto name = $1->name; $$->defsDefn[name] = std::move($1); }
     ;
 
 branches

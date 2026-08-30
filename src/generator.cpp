@@ -7,8 +7,6 @@ namespace cg {
 void CodeGenerator::createTypes() {
   this->stackType = llvm::StructType::create(this->ctx, "stack");
   this->gmachineType = llvm::StructType::create(this->ctx, "gmachine");
-  /* Opaque pointers: every pointee spells the same `ptr` type, so the
-   * context overload is the non-deprecated way to name it. */
   this->stackPointerType = llvm::PointerType::getUnqual(this->ctx);
   this->gmachinePtrType = llvm::PointerType::getUnqual(this->ctx);
   this->tagType = llvm::IntegerType::getInt8Ty(this->ctx);
@@ -36,8 +34,6 @@ void CodeGenerator::createTypes() {
   this->structTypes.at("node_app")
       ->setBody({this->structTypes.at("node_base"), this->nodePtrType,
                  this->nodePtrType});
-
-
 
   this->structTypes.at("node_global")
       ->setBody({this->structTypes.at("node_base"),
@@ -143,8 +139,7 @@ void CodeGenerator::createFunctions() {
   /* alloc_ind: (gmachine*, node_base*) -> node_base* */
   this->functions["alloc_ind"] = llvm::Function::Create(
       llvm::FunctionType::get(
-          this->nodePtrType,
-          {this->gmachinePtrType, this->nodePtrType}, false),
+          this->nodePtrType, {this->gmachinePtrType, this->nodePtrType}, false),
       llvm::Function::LinkageTypes::ExternalLinkage, "alloc_ind",
       &this->module);
 
@@ -266,7 +261,7 @@ llvm::Value *CodeGenerator::unwrapDataTag(llvm::Value *v) {
 }
 
 llvm::Value *CodeGenerator::createGlobal(llvm::Function *f, llvm::Value *gf,
-                                          llvm::Value *a) {
+                                         llvm::Value *a) {
   auto allocGlobal = this->functions.at("alloc_global");
   /* Pass the gmachine pointer -- alloc_global bump-allocates from the
    * minor heap and handles GC internally, no separate track call. */
@@ -274,7 +269,7 @@ llvm::Value *CodeGenerator::createGlobal(llvm::Function *f, llvm::Value *gf,
 }
 
 llvm::Value *CodeGenerator::createApp(llvm::Function *f, llvm::Value *l,
-                                       llvm::Value *r) {
+                                      llvm::Value *r) {
   auto allocApp = this->functions.at("alloc_app");
   /* Pass the gmachine pointer -- alloc_app bump-allocates from the
    * minor heap and handles GC internally, no separate track call. */
@@ -303,8 +298,6 @@ void CodeGenerator::createUnwind(llvm::Function *f) {
   auto unwind = this->functions.at("unwind");
   this->builder.CreateCall(unwind, {f->args().begin()});
 }
-
-
 
 llvm::Value *CodeGenerator::unwrapGmachineStackPtr(llvm::Value *g) {
   auto offset0 = this->createI32(0);

@@ -16,8 +16,7 @@ void yy::parser::error(const std::string &msg) {
   std::cout << "An error occured: " << msg << std::endl;
 }
 
-extern std::map<std::string, std::unique_ptr<DefinitionData>> defsData;
-extern std::map<std::string, std::unique_ptr<DefinitionDefn>> defsDefn;
+extern DefinitionGroup program;
 
 constexpr std::string objectFile = "object.o";
 constexpr const char *STD_LIB_PATH = "prelude/Base.ql";
@@ -56,7 +55,7 @@ int main(int argc, char *argv[]) {
 
     parser.parse();
 
-    for (auto &defDefn : defsDefn) {
+    for (auto &defDefn : program.defsDefn) {
       std::cout << defDefn.second->name;
       for (auto &param : defDefn.second->params)
         std::cout << " " << param;
@@ -65,9 +64,12 @@ int main(int argc, char *argv[]) {
       defDefn.second->body->print(1, std::cout);
     }
 
-    ff::drv::typecheckProgram(defsData, defsDefn, mgr, typeContext);
-    ff::drv::compileProgram(defsDefn);
-    ff::drv::generateLLVM(defsData, defsDefn,
+    GlobalScope globalScope;
+
+    ff::drv::typecheckProgram(program, mgr, typeContext);
+    ff::drv::translateProgram(program, globalScope);
+    ff::drv::compileProgram(program, globalScope);
+    ff::drv::generateLLVM(program, globalScope,
                           objectFile); // TODO: Fix hardcoded output file
     ff::drv::linkToRuntime(cli.outputFile);
     ff::drv::cleanUp(objectFile); // TODO: Fix hardcoded output file
