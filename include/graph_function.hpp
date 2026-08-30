@@ -23,7 +23,7 @@ private:
   struct GroupData {
     std::set<function> functions;
     std::set<groupId> adjacencyList;
-    std::size_t indegree;
+    std::size_t indegree = 0;
   };
 
   using edge = std::pair<function, function>;
