@@ -3,7 +3,7 @@
 namespace ff {
 
 const char *TypeError::what() const noexcept {
-  return "an error occured while type checking";
+  return this->description.c_str();
 }
 
 const char *CliError::what() const noexcept {

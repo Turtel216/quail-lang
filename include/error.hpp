@@ -5,7 +5,7 @@
 
 namespace ff {
 
-class TypeError : std::exception {
+class TypeError : public std::exception {
 public:
   std::string description;
 
@@ -25,7 +25,7 @@ public:
         right(std::move(r)) {}
 };
 
-class CliError : std::exception {
+class CliError : public std::exception {
 public:
   std::string description;
 
@@ -34,7 +34,7 @@ public:
   const char *what() const noexcept override;
 };
 
-class DebugError : std::exception {
+class DebugError : public std::exception {
 public:
   std::string description;
 

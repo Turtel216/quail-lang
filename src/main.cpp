@@ -71,7 +71,7 @@ int main(int argc, char *argv[]) {
                           objectFile); // TODO: Fix hardcoded output file
     ff::drv::linkToRuntime(cli.outputFile);
     ff::drv::cleanUp(objectFile); // TODO: Fix hardcoded output file
-  } catch (ff::UnificationError &err) {
+  } catch (const ff::UnificationError &err) {
     std::cout << "failed to unify types: " << std::endl;
     std::cout << "  (1) \033[34m";
     err.left->print(mgr, std::cout);
@@ -81,12 +81,12 @@ int main(int argc, char *argv[]) {
     err.right->print(mgr, std::cout);
 
     std::cout << "\033[0m" << std::endl;
-  } catch (ff::TypeError &err) {
+  } catch (const ff::TypeError &err) {
     std::cout << "failed to type check program: " << err.description
               << std::endl;
-  } catch (ff::CliError &err) {
+  } catch (const ff::CliError &err) {
     std::cout << err.what();
-  } catch (ff::DebugError &err) {
+  } catch (const ff::DebugError &err) {
     std::cout << err.what();
   }
 }
