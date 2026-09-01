@@ -2,28 +2,29 @@
 #include "../include/cli.hpp"
 #include "../include/driver.hpp"
 #include "../include/error.hpp"
+#include "../include/file_manager.hpp"
+#include "../include/parse_driver.hpp"
 #include "../include/types.hpp"
-#include "parser.hpp"
-#include <cstdio>
-
-extern FILE *yyin;
-
-extern void yypush_buffer_state(struct yy_buffer_state *);
-extern void yypop_buffer_state();
-extern struct yy_buffer_state *yy_create_buffer(FILE *, int);
-
-void yy::parser::error(const std::string &msg) {
-  std::cout << "An error occured: " << msg << std::endl;
-}
-
-extern DefinitionGroup program;
+#include <iostream>
 
 constexpr std::string objectFile = "object.o";
 constexpr const char *STD_LIB_PATH = "prelude/Base.ql";
 
+namespace {
+
+void parseFile(ff::drv::FileManager &files, DefinitionGroup &program,
+               const std::string &path) {
+  ff::drv::ParseDriver driver(files, program, path);
+  if (!driver())
+    throw ff::CompilerError("could not open file " + path);
+}
+
+} // namespace
+
 int main(int argc, char *argv[]) {
-  yy::parser parser;
+  ff::drv::FileManager files;
   ff::sem::TypeManager mgr;
+  DefinitionGroup program;
   std::shared_ptr<ff::sem::TypeContext> typeContext(new ff::sem::TypeContext);
 
   try {
@@ -34,26 +35,8 @@ int main(int argc, char *argv[]) {
       return 0;
     }
 
-    FILE *file = fopen(cli.sourceFile.c_str(), "r");
-    if (!file) {
-      llvm::errs() << "Error: Could not open file" << cli.sourceFile << '\n';
-    }
-
-    // Open the standard library file
-    FILE *stdlibFile = fopen(STD_LIB_PATH, "r");
-    if (!stdlibFile) {
-      llvm::errs() << "Error: Could not open standard library file\n";
-      fclose(file);
-      return 1;
-    }
-
-    yyin = file;
-    yypush_buffer_state(yy_create_buffer(yyin, 16384));
-
-    yyin = stdlibFile;
-    yypush_buffer_state(yy_create_buffer(yyin, 16384));
-
-    parser.parse();
+    parseFile(files, program, STD_LIB_PATH);
+    parseFile(files, program, cli.sourceFile);
 
     for (auto &defDefn : program.defsDefn) {
       std::cout << defDefn.second->name;
@@ -74,21 +57,13 @@ int main(int argc, char *argv[]) {
     ff::drv::linkToRuntime(cli.outputFile);
     ff::drv::cleanUp(objectFile); // TODO: Fix hardcoded output file
   } catch (const ff::UnificationError &err) {
-    std::cout << "failed to unify types: " << std::endl;
-    std::cout << "  (1) \033[34m";
-    err.left->print(mgr, std::cout);
-
-    std::cout << "\033[0m" << std::endl;
-    std::cout << "  (2) \033[32m";
-    err.right->print(mgr, std::cout);
-
-    std::cout << "\033[0m" << std::endl;
-  } catch (const ff::TypeError &err) {
-    std::cout << "failed to type check program: " << err.description
-              << std::endl;
+    err.prettyPrint(std::cerr, files, mgr);
+    return 1;
+  } catch (const ff::CompilerError &err) {
+    err.prettyPrint(std::cerr, files);
+    return 1;
   } catch (const ff::CliError &err) {
-    std::cout << err.what();
-  } catch (const ff::DebugError &err) {
-    std::cout << err.what();
+    std::cerr << err.what() << std::endl;
+    return 1;
   }
 }

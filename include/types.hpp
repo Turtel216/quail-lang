@@ -1,7 +1,9 @@
 #pragma once
 
+#include <location.hh>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -95,7 +97,11 @@ public:
   std::shared_ptr<Type> newType() noexcept;
   std::shared_ptr<Type> newArrowType() noexcept;
 
-  void unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r);
+  /* `loc` is the expression whose typing forced this unification; it is
+   * carried down the recursion so a mismatch deep inside a type can still
+   * point at the code that caused it. */
+  void unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r,
+             const std::optional<yy::location> &loc = std::nullopt);
   std::shared_ptr<Type> resolve(std::shared_ptr<Type> t, TypeVar *&var) const;
   void bind(const std::string &s, std::shared_ptr<Type> t);
   void findFree(const std::shared_ptr<Type> &t,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "types.hpp"
+#include <location.hh>
 #include <map>
 #include <memory>
 #include <string>
@@ -37,7 +38,8 @@ public:
   void bind(const std::string &name, std::shared_ptr<TypeScheme> t,
             Visibility visibility = Visibility::Local);
   std::shared_ptr<Type> lookupType(const std::string &name) const;
-  void bindType(const std::string &typeName, std::shared_ptr<Type> t);
+  void bindType(const std::string &typeName, std::shared_ptr<Type> t,
+                const yy::location &loc = yy::location());
 
   /* Type variables free in the surrounding bindings, skipping `except`.
    * A binding may only be generalized over the variables this does not

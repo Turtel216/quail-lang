@@ -73,12 +73,13 @@ void outputLLVM(ff::cg::CodeGenerator &generator,
     std::error_code ec;
     llvm::raw_fd_ostream file(objectFile, ec, llvm::sys::fs::OF_None);
     if (ec) {
-      throw ff::DebugError("outputLLVM error");
+      throw ff::CompilerError("could not open " + objectFile + " for writing");
     } else {
       llvm::CodeGenFileType type = llvm::CodeGenFileType::ObjectFile;
       llvm::legacy::PassManager pm;
       if (targetMachine->addPassesToEmitFile(pm, file, NULL, type)) {
-        throw ff::DebugError("outputLLVM error");
+        throw ff::CompilerError(
+            "the target machine cannot emit an object file");
       } else {
         pm.run(generator.module);
         file.close();
@@ -136,7 +137,7 @@ void linkToRuntime(const std::string &output) {
   command += " object.o -o" + output;
 
   if (std::system(command.c_str()) != 0) {
-    throw ff::DebugError("linkToRuntime error");
+    throw ff::CompilerError("failed to link the program against the runtime");
   }
 }
 

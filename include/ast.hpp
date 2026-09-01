@@ -9,6 +9,7 @@
 #include "graph_function.hpp"
 #include "instructions.hpp"
 #include <llvm/IR/Function.h>
+#include <location.hh>
 #include <map>
 #include <memory>
 #include <set>
@@ -20,6 +21,11 @@ class GlobalScope;
 class Ast {
 public:
   std::shared_ptr<ff::sem::TypeContext> typeContext;
+  /* Where this subexpression came from, so an error about it can quote the
+   * source instead of just describing it. */
+  yy::location loc;
+
+  Ast(yy::location l) : loc(std::move(l)) {}
 
   virtual ~Ast() = default;
 
@@ -47,6 +53,10 @@ public:
 
 class Pattern {
 public:
+  yy::location loc;
+
+  Pattern(yy::location l) : loc(std::move(l)) {}
+
   virtual ~Pattern() = default;
 
   virtual void print(std::ostream &to) const = 0;
@@ -83,7 +93,8 @@ class AstInt : public Ast {
 public:
   int value;
 
-  explicit AstInt(int v) : value(v) {}
+  explicit AstInt(int v, yy::location lc = yy::location())
+      : Ast(std::move(lc)), value(v) {}
 
   std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
@@ -104,7 +115,8 @@ class AstLid : public Ast {
 public:
   std::string id;
 
-  explicit AstLid(std::string i) : id(std::move(i)) {}
+  explicit AstLid(std::string i, yy::location lc = yy::location())
+      : Ast(std::move(lc)), id(std::move(i)) {}
 
   std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
@@ -125,7 +137,8 @@ class AstUid : public Ast {
 public:
   std::string id;
 
-  explicit AstUid(std::string i) : id(std::move(i)) {}
+  explicit AstUid(std::string i, yy::location lc = yy::location())
+      : Ast(std::move(lc)), id(std::move(i)) {}
 
   std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
@@ -147,8 +160,10 @@ public:
   std::unique_ptr<Ast> left;
   std::unique_ptr<Ast> right;
 
-  AstBinop(binop _op, std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs)
-      : op(_op), left(std::move(lhs)), right(std::move(rhs)) {}
+  AstBinop(binop _op, std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs,
+           yy::location lc = yy::location())
+      : Ast(std::move(lc)), op(_op), left(std::move(lhs)),
+        right(std::move(rhs)) {}
 
   std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
@@ -170,8 +185,9 @@ public:
   std::unique_ptr<Ast> left;
   std::unique_ptr<Ast> right;
 
-  AstApp(std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs)
-      : left(std::move(lhs)), right(std::move(rhs)) {}
+  AstApp(std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs,
+         yy::location lc = yy::location())
+      : Ast(std::move(lc)), left(std::move(lhs)), right(std::move(rhs)) {}
 
   std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
@@ -194,8 +210,10 @@ public:
   std::shared_ptr<ff::sem::Type> inputType;
 
   AstCase(std::unique_ptr<Ast> _of,
-          std::vector<std::unique_ptr<Branch>> _branches)
-      : of(std::move(_of)), branches(std::move(_branches)) {}
+          std::vector<std::unique_ptr<Branch>> _branches,
+          yy::location lc = yy::location())
+      : Ast(std::move(lc)), of(std::move(_of)), branches(std::move(_branches)) {
+  }
 
   std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
@@ -216,7 +234,8 @@ class PatternVar : public Pattern {
 public:
   std::string var;
 
-  PatternVar(std::string _var) : var(std::move(_var)) {}
+  PatternVar(std::string _var, yy::location lc = yy::location())
+      : Pattern(std::move(lc)), var(std::move(_var)) {}
 
   void
   insertBindings(ff::sem::TypeManager &mgr,
@@ -235,8 +254,9 @@ public:
   std::string constr;
   std::vector<std::string> params;
 
-  PatternConstr(std::string c, std::vector<std::string> p)
-      : constr(std::move(c)), params(std::move(p)) {}
+  PatternConstr(std::string c, std::vector<std::string> p,
+                yy::location lc = yy::location())
+      : Pattern(std::move(lc)), constr(std::move(c)), params(std::move(p)) {}
 
   void
   insertBindings(ff::sem::TypeManager &mgr,
@@ -272,10 +292,13 @@ public: // TODO: Fix encapsulation
 
   llvm::Function *generatedFunction;
 
+  yy::location loc;
+
   DefinitionDefn(std::string n, std::vector<std::string> p,
-                 std::unique_ptr<Ast> b)
+                 std::unique_ptr<Ast> b, yy::location lc = yy::location())
       : name(std::move(n)), params(std::move(p)), body(std::move(b)),
-        visibility(ff::sem::Visibility::Global), mangledName(name) {}
+        visibility(ff::sem::Visibility::Global), mangledName(name),
+        loc(std::move(lc)) {}
 
   void findFree(ff::sem::TypeManager &mgr,
                 std::shared_ptr<ff::sem::TypeContext> &typeCtx);
@@ -295,10 +318,13 @@ public:
 
   std::shared_ptr<ff::sem::TypeContext> typeContext;
 
+  yy::location loc;
+
   DefinitionData(std::string n, std::vector<std::string> _vars,
-                 std::vector<std::unique_ptr<Constructor>> cs)
-      : name(std::move(n)), constructors(std::move(cs)),
-        vars(std::move(_vars)) {}
+                 std::vector<std::unique_ptr<Constructor>> cs,
+                 yy::location lc = yy::location())
+      : name(std::move(n)), constructors(std::move(cs)), vars(std::move(_vars)),
+        loc(std::move(lc)) {}
 
   void insertTypes(std::shared_ptr<ff::sem::TypeContext> &typeCtx);
   void insertConstructors() const;
@@ -354,8 +380,9 @@ public:
   std::unique_ptr<DefinitionDefn> lifted;
   std::unique_ptr<Ast> translated;
 
-  AstLambda(std::vector<std::string> p, std::unique_ptr<Ast> b)
-      : params(std::move(p)), body(std::move(b)) {}
+  AstLambda(std::vector<std::string> p, std::unique_ptr<Ast> b,
+            yy::location lc = yy::location())
+      : Ast(std::move(lc)), params(std::move(p)), body(std::move(b)) {}
 
   std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
@@ -386,8 +413,9 @@ public:
 
   std::vector<Binding> bindings;
 
-  AstLet(std::unique_ptr<DefinitionGroup> d, std::unique_ptr<Ast> i)
-      : definitions(std::move(d)), in(std::move(i)) {}
+  AstLet(std::unique_ptr<DefinitionGroup> d, std::unique_ptr<Ast> i,
+         yy::location lc = yy::location())
+      : Ast(std::move(lc)), definitions(std::move(d)), in(std::move(i)) {}
 
   std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 

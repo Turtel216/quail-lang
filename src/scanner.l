@@ -1,43 +1,47 @@
 %{
 #include <iostream>
 #include "../include/ast.hpp"
+#include "../include/parse_driver.hpp"
 #include "parser.hpp"
 
-#define YY_DECL yy::parser::symbol_type yylex()
+#define LOC drv.getLocation()
+
+/* Runs before every rule: record the text so errors can quote it, and move
+ * the location to cover exactly the token we just matched. */
+#define YY_USER_ACTION \
+    drv.getFile().write(yytext, yyleng); \
+    LOC.step(); LOC.columns(yyleng);
 
 %}
 
-%%
-
-[ \n]+ {}
-\+ { return yy::parser::make_PLUS(); }
-\* { return yy::parser::make_TIMES(); }
-- { return yy::parser::make_MINUS(); }
-\/ { return yy::parser::make_DIVIDE(); }
-[0-9]+ { return yy::parser::make_INT(atoi(yytext)); }
-fun { return yy::parser::make_DEFN(); }
-type { return yy::parser::make_DATA(); }
-match { return yy::parser::make_CASE(); }
-with { return yy::parser::make_OF(); }
-let { return yy::parser::make_LET(); }
-in { return yy::parser::make_IN(); }
-\\ { return yy::parser::make_LAMBDA(); }
-\{ { return yy::parser::make_OCURLY(); }
-\} { return yy::parser::make_CCURLY(); }
-\( { return yy::parser::make_OPAREN(); }
-\) { return yy::parser::make_CPAREN(); }
-,  { return yy::parser::make_COMMA(); }
--> { return yy::parser::make_ARROW(); }
-= { return yy::parser::make_EQUAL(); }
-[a-z][a-zA-Z]* { return yy::parser::make_LID(std::string(yytext)); }
-[A-Z][a-zA-Z]* { return yy::parser::make_UID(std::string(yytext)); }
+%option reentrant
+%option noyywrap
 
 %%
 
-int yywrap() {
-    yypop_buffer_state();
-    if (!YY_CURRENT_BUFFER) {
-        return 1; // No more input
-    }
-    return 0; 
-}
+\n { LOC.lines(1); LOC.step(); drv.getFile().markLine(); }
+[ \t\r]+ {}
+\+ { return yy::parser::make_PLUS(LOC); }
+\* { return yy::parser::make_TIMES(LOC); }
+- { return yy::parser::make_MINUS(LOC); }
+\/ { return yy::parser::make_DIVIDE(LOC); }
+[0-9]+ { return yy::parser::make_INT(atoi(yytext), LOC); }
+fun { return yy::parser::make_DEFN(LOC); }
+type { return yy::parser::make_DATA(LOC); }
+match { return yy::parser::make_CASE(LOC); }
+with { return yy::parser::make_OF(LOC); }
+let { return yy::parser::make_LET(LOC); }
+in { return yy::parser::make_IN(LOC); }
+\\ { return yy::parser::make_LAMBDA(LOC); }
+\{ { return yy::parser::make_OCURLY(LOC); }
+\} { return yy::parser::make_CCURLY(LOC); }
+\( { return yy::parser::make_OPAREN(LOC); }
+\) { return yy::parser::make_CPAREN(LOC); }
+,  { return yy::parser::make_COMMA(LOC); }
+-> { return yy::parser::make_ARROW(LOC); }
+= { return yy::parser::make_EQUAL(LOC); }
+[a-z][a-zA-Z]* { return yy::parser::make_LID(std::string(yytext), LOC); }
+[A-Z][a-zA-Z]* { return yy::parser::make_UID(std::string(yytext), LOC); }
+<<EOF>> { return yy::parser::make_YYEOF(LOC); }
+
+%%

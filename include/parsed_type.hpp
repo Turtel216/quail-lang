@@ -2,6 +2,7 @@
 
 #include "context.hpp"
 #include "types.hpp"
+#include <location.hh>
 #include <set>
 
 namespace ff {
@@ -11,8 +12,11 @@ class ParsedType {
 public:
   virtual ~ParsedType() = default;
 
+  /* `loc` is the definition this type was written in, so a bad type can be
+   * reported against the source that declared it. */
   virtual std::shared_ptr<Type> toType(const std::set<std::string> &vars,
-                                       const TypeContext &typeCtx) const = 0;
+                                       const TypeContext &typeCtx,
+                                       const yy::location &loc) const = 0;
 };
 
 class ParsedTypeApp : public ParsedType {
@@ -25,7 +29,8 @@ public:
       : name(std::move(_name)), arguments(std::move(_arguments)) {}
 
   std::shared_ptr<Type> toType(const std::set<std::string> &vars,
-                               const TypeContext &typeCtx) const override;
+                               const TypeContext &typeCtx,
+                               const yy::location &loc) const override;
 };
 
 class ParsedTypeVar : public ParsedType {
@@ -35,7 +40,8 @@ public:
   ParsedTypeVar(std::string _var) : var(std::move(_var)) {}
 
   std::shared_ptr<Type> toType(const std::set<std::string> &vars,
-                               const TypeContext &typeCtx) const override;
+                               const TypeContext &typeCtx,
+                               const yy::location &loc) const override;
 };
 
 class ParsedTypeArr : public ParsedType {
@@ -48,7 +54,8 @@ public:
       : left(std::move(_left)), right(std::move(_right)) {}
 
   std::shared_ptr<Type> toType(const std::set<std::string> &vars,
-                               const TypeContext &typeCtx) const override;
+                               const TypeContext &typeCtx,
+                               const yy::location &loc) const override;
 };
 } // namespace sem
 } // namespace ff

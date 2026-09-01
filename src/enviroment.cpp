@@ -1,5 +1,5 @@
 #include "../include/enviroment.hpp"
-#include "error.hpp"
+#include <cassert>
 
 namespace ff {
 namespace ir {
@@ -7,27 +7,21 @@ int EnviromentVar::getOffset(const std::string &name) const {
   if (name == this->name)
     return 0;
 
-  if (this->parent)
-    return 1 + this->parent->getOffset(name);
-
-  throw ff::DebugError("EnviromentVar getOffset error");
+  /* Only names the generator has already put in scope are ever looked up. */
+  assert(this->parent != nullptr);
+  return 1 + this->parent->getOffset(name);
 }
 
 bool EnviromentVar::hasVariable(const std::string &name) const {
   if (name == this->name)
     return true;
 
-  if (parent)
-    return parent->hasVariable(name);
-
-  throw ff::DebugError("EnviromentVar hasVariable error");
+  return parent && parent->hasVariable(name);
 }
 
 int EnviromentOffset::getOffset(const std::string &name) const {
-  if (parent)
-    return offset + parent->getOffset(name);
-
-  throw ff::DebugError("EnviromentOffset getOffset error");
+  assert(parent != nullptr);
+  return offset + parent->getOffset(name);
 }
 
 bool EnviromentOffset::hasVariable(const std::string &name) const {

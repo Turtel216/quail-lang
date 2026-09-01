@@ -5,6 +5,7 @@
 #include "../include/types.hpp"
 #include "error.hpp"
 #include "instructions.hpp"
+#include <cassert>
 #include <iostream>
 #include <memory>
 
@@ -66,7 +67,10 @@ void AstInt::print(int indent, std::ostream &to) const {
 }
 
 std::shared_ptr<ff::sem::Type> AstLid::typecheck(ff::sem::TypeManager &mgr) {
-  return typeContext->lookup(id)->scheme->instantiate(mgr);
+  auto variable = typeContext->lookup(id);
+  /* Undefined names are reported before typechecking begins. */
+  assert(variable != nullptr);
+  return variable->scheme->instantiate(mgr);
 }
 
 void AstLid::translate(GlobalScope &) {}
@@ -86,7 +90,10 @@ void AstLid::print(int indent, std::ostream &to) const {
 }
 
 std::shared_ptr<ff::sem::Type> AstUid::typecheck(ff::sem::TypeManager &mgr) {
-  return typeContext->lookup(id)->scheme->instantiate(mgr);
+  auto constructor = typeContext->lookup(id);
+  if (!constructor)
+    throw ff::TypeError("unknown constructor " + id, loc);
+  return constructor->scheme->instantiate(mgr);
 }
 
 void AstUid::findFree(ff::sem::TypeManager &,
@@ -114,7 +121,8 @@ std::shared_ptr<ff::sem::Type> AstBinop::typecheck(ff::sem::TypeManager &mgr) {
   auto rtype = right->typecheck(mgr);
   auto opVariable = typeContext->lookup(opName(op));
   if (!opVariable)
-    throw ff::TypeError(std::string("unknown binary operator ") + opName(op));
+    throw ff::TypeError(std::string("unknown binary operator ") + opName(op),
+                        loc);
 
   auto ftype = opVariable->scheme->instantiate(mgr);
   auto returnType = mgr.newType();
@@ -123,7 +131,7 @@ std::shared_ptr<ff::sem::Type> AstBinop::typecheck(ff::sem::TypeManager &mgr) {
   auto arrowTwo =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(ltype, arrowOne));
 
-  mgr.unify(arrowTwo, ftype);
+  mgr.unify(ftype, arrowTwo, loc);
   return returnType;
 }
 
@@ -168,7 +176,7 @@ std::shared_ptr<ff::sem::Type> AstApp::typecheck(ff::sem::TypeManager &mgr) {
   auto returnType = mgr.newType();
   auto arrow =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(rtype, returnType));
-  mgr.unify(arrow, ltype);
+  mgr.unify(ltype, arrow, loc);
   return returnType;
 }
 
@@ -235,14 +243,14 @@ std::shared_ptr<ff::sem::Type> AstCase::typecheck(ff::sem::TypeManager &mgr) {
   for (auto &branch : branches) {
     branch->pattern->typecheck(caseType, mgr, branch->expr->typeContext);
     auto currBranchType = branch->expr->typecheck(mgr);
-    mgr.unify(branchType, currBranchType);
+    mgr.unify(branchType, currBranchType, branch->expr->loc);
   }
 
   this->inputType = mgr.resolve(caseType, var);
   ff::sem::TypeApp *appType;
   if (!(appType = dynamic_cast<ff::sem::TypeApp *>(inputType.get())) ||
       !dynamic_cast<ff::sem::TypeData *>(appType->constructor.get())) {
-    throw ff::TypeError("attempting case analysis of non-data type");
+    throw ff::TypeError("attempting case analysis of non-data type", loc);
   }
 
   return branchType;
@@ -298,7 +306,8 @@ void AstCase::generate(
       int newTag = type->constructors[cpat->constr].tag;
       if (jumpInstruction->tagMappings.find(newTag) !=
           jumpInstruction->tagMappings.end())
-        throw ff::TypeError("technically not a type error: duplicate pattern");
+        throw ff::CompilerError("duplicate pattern in case expression",
+                                branch->pattern->loc);
 
       jumpInstruction->tagMappings[newTag] = jumpInstruction->branches.size();
       jumpInstruction->branches.push_back(std::move(branchInstructions));
@@ -308,7 +317,9 @@ void AstCase::generate(
   for (auto &constrPair : type->constructors) {
     if (jumpInstruction->tagMappings.find(constrPair.second.tag) ==
         jumpInstruction->tagMappings.end())
-      throw ff::TypeError("non-total pattern");
+      throw ff::CompilerError("case expression does not cover every "
+                              "constructor of its data type",
+                              loc);
   }
 }
 
@@ -324,7 +335,7 @@ void AstCase::print(int indent, std::ostream &to) const {
 }
 
 std::shared_ptr<ff::sem::Type> AstLambda::typecheck(ff::sem::TypeManager &mgr) {
-  mgr.unify(returnType, body->typecheck(mgr));
+  mgr.unify(returnType, body->typecheck(mgr), body->loc);
   return fullType;
 }
 
@@ -354,7 +365,7 @@ void AstLambda::findFree(ff::sem::TypeManager &mgr,
 
 void AstLambda::translate(GlobalScope &scope) {
   lifted = std::unique_ptr<DefinitionDefn>(
-      new DefinitionDefn("lambda", params, std::move(body)));
+      new DefinitionDefn("lambda", params, std::move(body), loc));
 
   lifted->visibility = ff::sem::Visibility::Local;
   lifted->typeContext = typeContext;
@@ -471,7 +482,7 @@ void PatternVar::eraseBindings(std::set<std::string> &from) const {
 void PatternVar::typecheck(
     std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
     std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
-  mgr.unify(typeCtx->lookup(var)->scheme->instantiate(mgr), t);
+  mgr.unify(typeCtx->lookup(var)->scheme->instantiate(mgr), t, loc);
 }
 
 void PatternConstr::typecheck(
@@ -479,8 +490,8 @@ void PatternConstr::typecheck(
     std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
   auto constructor = typeCtx->lookup(constr);
   if (!constructor) {
-    throw ff::TypeError(std::string("pattern using unknown constructor ") +
-                        constr);
+    throw ff::TypeError(
+        std::string("pattern using unknown constructor ") + constr, loc);
   }
 
   auto constructorType = constructor->scheme->instantiate(mgr);
@@ -489,13 +500,14 @@ void PatternConstr::typecheck(
         dynamic_cast<ff::sem::TypeArr *>(constructorType.get());
 
     if (!arr)
-      throw ff::TypeError("too many parameters in constructor pattern");
+      throw ff::TypeError("too many parameters in constructor pattern", loc);
 
-    mgr.unify(typeCtx->lookup(param)->scheme->instantiate(mgr), arr->getLeft());
+    mgr.unify(typeCtx->lookup(param)->scheme->instantiate(mgr), arr->getLeft(),
+              loc);
     constructorType = arr->getRight();
   }
 
-  mgr.unify(t, constructorType);
+  mgr.unify(t, constructorType, loc);
 }
 
 void PatternConstr::insertBindings(
@@ -548,7 +560,7 @@ void DefinitionDefn::insertTypes(ff::sem::TypeManager &) {
 
 void DefinitionDefn::typecheck(ff::sem::TypeManager &mgr) {
   auto bodyType = body->typecheck(mgr);
-  mgr.unify(returnType, bodyType);
+  mgr.unify(returnType, bodyType, body->loc);
 }
 
 void DefinitionDefn::translate(GlobalScope &scope) {
@@ -601,8 +613,10 @@ void DefinitionDefn::generateLLVM(ff::cg::CodeGenerator &generator) {
 void DefinitionData::insertTypes(
     std::shared_ptr<ff::sem::TypeContext> &typeCtx) {
   this->typeContext = typeCtx;
-  typeContext->bindType(name, std::shared_ptr<ff::sem::Type>(
-                                  new ff::sem::TypeData(name, vars.size())));
+  typeContext->bindType(
+      name,
+      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeData(name, vars.size())),
+      loc);
 }
 
 void DefinitionData::insertConstructors() const {
@@ -618,7 +632,8 @@ void DefinitionData::insertConstructors() const {
 
   for (auto &var : vars) {
     if (varSet.find(var) != varSet.end())
-      ff::DebugError("DefinitionData::insertConstructors");
+      throw ff::CompilerError(
+          "type variable " + var + " used twice in data type definition", loc);
 
     varSet.insert(var);
     returnApp->arguments.push_back(
@@ -632,7 +647,8 @@ void DefinitionData::insertConstructors() const {
     std::shared_ptr<ff::sem::Type> fullType = returnType;
     for (auto it = constructor->types.rbegin(); it != constructor->types.rend();
          it++) {
-      std::shared_ptr<ff::sem::Type> type = (*it)->toType(varSet, typeContext);
+      std::shared_ptr<ff::sem::Type> type =
+          (*it)->toType(varSet, *typeContext, loc);
       fullType =
           std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(type, fullType));
     }

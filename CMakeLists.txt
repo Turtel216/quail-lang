@@ -33,6 +33,7 @@ FLEX_TARGET(
     Lexer
     ${CMAKE_CURRENT_SOURCE_DIR}/src/scanner.l
     ${GENERATED_DIR}/scanner.cpp
+    DEFINES_FILE ${GENERATED_DIR}/scanner.hpp
 )
 
 BISON_TARGET(
@@ -73,6 +74,8 @@ set(SRC_FILES
     src/generator.cpp
     src/cli.cpp
     src/driver.cpp
+    src/parse_driver.cpp
+    src/file_manager.cpp
     src/graph_function.cpp
 )
 

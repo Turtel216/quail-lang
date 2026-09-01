@@ -1,5 +1,6 @@
 #include "../include/context.hpp"
 #include "error.hpp"
+#include <cassert>
 #include <set>
 
 namespace ff {
@@ -24,10 +25,10 @@ std::shared_ptr<Type> TypeContext::lookupType(const std::string &name) const {
   return nullptr;
 }
 
-void TypeContext::bindType(const std::string &typeName,
-                           std::shared_ptr<Type> t) {
+void TypeContext::bindType(const std::string &typeName, std::shared_ptr<Type> t,
+                           const yy::location &loc) {
   if (lookupType(typeName) != nullptr)
-    throw ff::DebugError("TypeContext bindType error");
+    throw ff::CompilerError("type " + typeName + " is already defined", loc);
 
   typeNames[typeName] = t;
 }
@@ -74,10 +75,10 @@ void TypeContext::generalize(const std::string &name,
                              const std::set<std::string> &except,
                              TypeManager &mgr) {
   auto namesIt = names.find(name);
-  if (namesIt == names.end())
-    throw ff::DebugError("TypeContext generalize error");
-  if (namesIt->second->scheme->forall.size() > 0)
-    throw ff::DebugError("TypeContext generalize error");
+  /* Nothing outside of typechecking generalizes, and a binding is only ever
+   * reached once by its own group. */
+  assert(namesIt != names.end());
+  assert(namesIt->second->scheme->forall.size() == 0);
 
   std::set<std::string> boundVariables;
   findFree(mgr, except, boundVariables);

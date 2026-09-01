@@ -2,7 +2,9 @@
 #include "../include/parsed_type.hpp"
 #include "error.hpp"
 #include <algorithm>
+#include <cassert>
 #include <memory>
+#include <sstream>
 #include <utility>
 
 namespace ff {
@@ -93,7 +95,8 @@ std::shared_ptr<Type> TypeManager::resolve(std::shared_ptr<Type> t,
   return t;
 }
 
-void TypeManager::unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r) {
+void TypeManager::unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r,
+                        const std::optional<yy::location> &loc) {
   TypeVar *lvar, *rvar;
   TypeArr *larr, *rarr;
   TypeBase *lid, *rid;
@@ -110,8 +113,8 @@ void TypeManager::unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r) {
     return;
   } else if ((larr = dynamic_cast<TypeArr *>(l.get())) &&
              (rarr = dynamic_cast<TypeArr *>(r.get()))) {
-    unify(larr->getLeft(), rarr->getLeft());
-    unify(larr->getRight(), rarr->getRight());
+    unify(larr->getLeft(), rarr->getLeft(), loc);
+    unify(larr->getRight(), rarr->getRight(), loc);
     return;
   } else if ((lid = dynamic_cast<TypeBase *>(l.get())) &&
              (rid = dynamic_cast<TypeBase *>(r.get()))) {
@@ -119,18 +122,18 @@ void TypeManager::unify(std::shared_ptr<Type> l, std::shared_ptr<Type> r) {
       return;
   } else if ((lapp = dynamic_cast<TypeApp *>(l.get())) &&
              (rapp = dynamic_cast<TypeApp *>(r.get()))) {
-    unify(lapp->constructor, rapp->constructor);
+    unify(lapp->constructor, rapp->constructor, loc);
     auto leftIt = lapp->arguments.begin();
     auto rightIt = rapp->arguments.begin();
     while (leftIt != lapp->arguments.end() &&
            rightIt != rapp->arguments.end()) {
-      unify(*leftIt, *rightIt);
+      unify(*leftIt, *rightIt, loc);
       leftIt++, rightIt++;
     }
     return;
   }
 
-  throw ff::UnificationError(l, r);
+  throw ff::UnificationError(l, r, loc);
 }
 
 void TypeManager::bind(const std::string &s, std::shared_ptr<Type> t) {
@@ -211,45 +214,48 @@ void TypeManager::findFree(const std::shared_ptr<Type> &t,
 }
 
 std::shared_ptr<Type> ParsedTypeApp::toType(const std::set<std::string> &vars,
-                                            const TypeContext &typeCtx) const {
+                                            const TypeContext &typeCtx,
+                                            const yy::location &loc) const {
   auto parentType = typeCtx.lookupType(name);
   if (parentType == nullptr)
-    throw ff::DebugError("PardedTypeApp parent");
+    throw ff::TypeError("unknown type " + name, loc);
 
-  TypeBase *baseType;
-  if (!(baseType = dynamic_cast<TypeBase *>(parentType.get())))
-    throw ff::DebugError("Parded TypeApp base");
+  /* Only data types and the built-in bases are ever bound as type names. */
+  TypeBase *baseType = dynamic_cast<TypeBase *>(parentType.get());
+  assert(baseType != nullptr);
 
   if (std::cmp_not_equal(baseType->getArity(), arguments.size())) {
-    std::string arity = std::to_string(baseType->getArity());
-    std::string argumentsSize = std::to_string(arguments.size());
-    std::string output =
-        "ParsedType App arity: " + arity + " != " + argumentsSize;
+    std::ostringstream errorStream;
+    errorStream << "invalid application of type " << name << " ("
+                << baseType->getArity() << " argument(s) expected, but "
+                << arguments.size() << " provided)";
 
-    throw ff::DebugError(output);
+    throw ff::TypeError(errorStream.str(), loc);
   }
 
   TypeApp *newApp = new TypeApp(std::move(parentType));
   std::shared_ptr<Type> toReturn(newApp);
   for (auto &arg : arguments) {
-    newApp->arguments.push_back(arg->toType(vars, typeCtx));
+    newApp->arguments.push_back(arg->toType(vars, typeCtx, loc));
   }
 
   return toReturn;
 }
 
 std::shared_ptr<Type> ParsedTypeVar::toType(const std::set<std::string> &vars,
-                                            const TypeContext &) const {
+                                            const TypeContext &,
+                                            const yy::location &loc) const {
   if (vars.find(var) == vars.end())
-    throw ff::DebugError("PardedTypeVar");
+    throw ff::TypeError("unbound type variable " + var, loc);
 
   return std::shared_ptr<Type>(new TypeVar(var));
 }
 
 std::shared_ptr<Type> ParsedTypeArr::toType(const std::set<std::string> &vars,
-                                            const TypeContext &typeCtx) const {
-  auto newLeft = left->toType(vars, typeCtx);
-  auto newRight = right->toType(vars, typeCtx);
+                                            const TypeContext &typeCtx,
+                                            const yy::location &loc) const {
+  auto newLeft = left->toType(vars, typeCtx, loc);
+  auto newRight = right->toType(vars, typeCtx, loc);
 
   return std::shared_ptr<Type>(
       new TypeArr(std::move(newLeft), std::move(newRight)));

@@ -1,15 +1,20 @@
-%{
+%code requires {
 #include <string>
-#include <iostream>
+#include <vector>
 #include "../include/ast.hpp"
 #include "../include/parsed_type.hpp"
 #include "parser.hpp"
 
-DefinitionGroup program;
-extern yy::parser::symbol_type yylex();
+namespace ff { namespace drv { class ParseDriver; } }
+using yyscan_t = void*;
+}
 
+%code {
+#include "../include/parse_driver.hpp"
+}
 
-%}
+%param { yyscan_t scanner }
+%param { ff::drv::ParseDriver& drv }
 
 %token PLUS
 %token TIMES
@@ -34,6 +39,7 @@ extern yy::parser::symbol_type yylex();
 %token <std::string> UID
 
 %language "c++"
+%locations
 %define api.value.type variant
 %define api.token.constructor
 %define parse.error verbose
@@ -65,14 +71,14 @@ definitions
     ;
 
 definition
-    : defn { auto name = $1->name; program.defsDefn[name] = std::move($1); }
-    | data { auto name = $1->name; program.defsData[name] = std::move($1); }
+    : defn { auto name = $1->name; drv.getGlobalDefs().defsDefn[name] = std::move($1); }
+    | data { auto name = $1->name; drv.getGlobalDefs().defsData[name] = std::move($1); }
     ;
 
 defn
     : DEFN LID lowercaseParams EQUAL OCURLY aAdd CCURLY
         { $$ = std::unique_ptr<DefinitionDefn>(
-            new DefinitionDefn(std::move($2), std::move($3), std::move($6))); }
+            new DefinitionDefn(std::move($2), std::move($3), std::move($6), @$)); }
     ;
 
 lowercaseParams
@@ -86,26 +92,26 @@ uppercaseParams
     ;
 
 aAdd
-    : aAdd PLUS aMul { $$ = std::unique_ptr<Ast>(new AstBinop(PLUS, std::move($1), std::move($3))); }
-    | aAdd MINUS aMul { $$ = std::unique_ptr<Ast>(new AstBinop(MINUS, std::move($1), std::move($3))); }
+    : aAdd PLUS aMul { $$ = std::unique_ptr<Ast>(new AstBinop(PLUS, std::move($1), std::move($3), @$)); }
+    | aAdd MINUS aMul { $$ = std::unique_ptr<Ast>(new AstBinop(MINUS, std::move($1), std::move($3), @$)); }
     | aMul { $$ = std::move($1); }
     ;
 
 aMul
-    : aMul TIMES app { $$ = std::unique_ptr<Ast>(new AstBinop(TIMES, std::move($1), std::move($3))); }
-    | aMul DIVIDE app { $$ = std::unique_ptr<Ast>(new AstBinop(DIVIDE, std::move($1), std::move($3))); }
+    : aMul TIMES app { $$ = std::unique_ptr<Ast>(new AstBinop(TIMES, std::move($1), std::move($3), @$)); }
+    | aMul DIVIDE app { $$ = std::unique_ptr<Ast>(new AstBinop(DIVIDE, std::move($1), std::move($3), @$)); }
     | app { $$ = std::move($1); }
     ;
 
 app
-    : app appBase { $$ = std::unique_ptr<Ast>(new AstApp(std::move($1), std::move($2))); }
+    : app appBase { $$ = std::unique_ptr<Ast>(new AstApp(std::move($1), std::move($2), @$)); }
     | appBase { $$ = std::move($1); }
     ;
 
 appBase
-    : INT { $$ = std::unique_ptr<Ast>(new AstInt($1)); }
-    | LID { $$ = std::unique_ptr<Ast>(new AstLid(std::move($1))); }
-    | UID { $$ = std::unique_ptr<Ast>(new AstUid(std::move($1))); }
+    : INT { $$ = std::unique_ptr<Ast>(new AstInt($1, @$)); }
+    | LID { $$ = std::unique_ptr<Ast>(new AstLid(std::move($1), @$)); }
+    | UID { $$ = std::unique_ptr<Ast>(new AstUid(std::move($1), @$)); }
     | OPAREN aAdd CPAREN { $$ = std::move($2); }
     | case { $$ = std::move($1); }
     | lambda { $$ = std::move($1); }
@@ -114,17 +120,17 @@ appBase
 
 case
     : CASE aAdd OF OCURLY branches CCURLY 
-        { $$ = std::unique_ptr<Ast>(new AstCase(std::move($2), std::move($5))); }
+        { $$ = std::unique_ptr<Ast>(new AstCase(std::move($2), std::move($5), @$)); }
     ;
 
 lambda
     : LAMBDA lowercaseParams ARROW OCURLY aAdd CCURLY
-        { $$ = std::unique_ptr<Ast>(new AstLambda(std::move($2), std::move($5))); }
+        { $$ = std::unique_ptr<Ast>(new AstLambda(std::move($2), std::move($5), @$)); }
     ;
 
 let
     : LET OCURLY letDefinitions CCURLY IN OCURLY aAdd CCURLY
-        { $$ = std::unique_ptr<Ast>(new AstLet(std::move($3), std::move($7))); }
+        { $$ = std::unique_ptr<Ast>(new AstLet(std::move($3), std::move($7), @$)); }
     ;
 
 letDefinitions
@@ -146,14 +152,14 @@ branch
     ;
 
 pattern
-    : LID { $$ = std::unique_ptr<Pattern>(new PatternVar(std::move($1))); }
+    : LID { $$ = std::unique_ptr<Pattern>(new PatternVar(std::move($1), @$)); }
     | UID lowercaseParams
-        { $$ = std::unique_ptr<Pattern>(new PatternConstr(std::move($1), std::move($2))); }
+        { $$ = std::unique_ptr<Pattern>(new PatternConstr(std::move($1), std::move($2), @$)); }
     ;
 
 data
     : DATA UID lowercaseParams EQUAL OCURLY constructors CCURLY
-        { $$ = std::unique_ptr<DefinitionData>(new DefinitionData(std::move($2), std::move($3), std::move($6))); }
+        { $$ = std::unique_ptr<DefinitionData>(new DefinitionData(std::move($2), std::move($3), std::move($6), @$)); }
     ;
 
 constructors
