@@ -1,5 +1,5 @@
-#include "../include/driver.hpp"
-#include "../include/binop.hpp"
+#include "driver.hpp"
+#include "binop.hpp"
 #include "error.hpp"
 #include "graph_function.hpp"
 #include "types.hpp"

@@ -31,14 +31,14 @@ file(MAKE_DIRECTORY ${GENERATED_DIR})
 
 FLEX_TARGET(
     Lexer
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/scanner.l
+    ${CMAKE_CURRENT_SOURCE_DIR}/compiler/scanner.l
     ${GENERATED_DIR}/scanner.cpp
     DEFINES_FILE ${GENERATED_DIR}/scanner.hpp
 )
 
 BISON_TARGET(
     Parser
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/parser.y
+    ${CMAKE_CURRENT_SOURCE_DIR}/compiler/parser.y
     ${GENERATED_DIR}/parser.cpp
     DEFINES_FILE ${GENERATED_DIR}/parser.hpp
 )
@@ -53,7 +53,7 @@ add_library(parser STATIC
 target_include_directories(parser
     PUBLIC
         ${GENERATED_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/compiler
 )
 
 target_compile_options(parser PRIVATE
@@ -63,20 +63,20 @@ target_compile_options(parser PRIVATE
 
 # Source files
 set(SRC_FILES
-    src/main.cpp
-    src/types.cpp
-    src/context.cpp
-    src/ast.cpp
-    src/error.cpp
-    src/instructions.cpp
-    src/binop.cpp
-    src/enviroment.cpp
-    src/generator.cpp
-    src/cli.cpp
-    src/driver.cpp
-    src/parse_driver.cpp
-    src/file_manager.cpp
-    src/graph_function.cpp
+    compiler/main.cpp
+    compiler/types.cpp
+    compiler/context.cpp
+    compiler/ast.cpp
+    compiler/error.cpp
+    compiler/instructions.cpp
+    compiler/binop.cpp
+    compiler/enviroment.cpp
+    compiler/generator.cpp
+    compiler/cli.cpp
+    compiler/driver.cpp
+    compiler/parse_driver.cpp
+    compiler/file_manager.cpp
+    compiler/graph_function.cpp
 )
 
 # Main executable

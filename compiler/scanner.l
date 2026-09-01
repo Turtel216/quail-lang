@@ -1,7 +1,7 @@
 %{
 #include <iostream>
-#include "../include/ast.hpp"
-#include "../include/parse_driver.hpp"
+#include "ast.hpp"
+#include "parse_driver.hpp"
 #include "parser.hpp"
 
 #define LOC drv.getLocation()

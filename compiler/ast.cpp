@@ -1,8 +1,8 @@
-#include "../include/ast.hpp"
+#include "ast.hpp"
 
-#include "../include/context.hpp"
-#include "../include/enviroment.hpp"
-#include "../include/types.hpp"
+#include "context.hpp"
+#include "enviroment.hpp"
+#include "types.hpp"
 #include "error.hpp"
 #include "instructions.hpp"
 #include <cassert>

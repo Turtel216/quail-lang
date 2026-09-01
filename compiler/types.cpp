@@ -1,5 +1,5 @@
-#include "../include/types.hpp"
-#include "../include/parsed_type.hpp"
+#include "types.hpp"
+#include "parsed_type.hpp"
 #include "error.hpp"
 #include <algorithm>
 #include <cassert>

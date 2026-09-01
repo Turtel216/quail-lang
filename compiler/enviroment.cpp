@@ -1,4 +1,4 @@
-#include "../include/enviroment.hpp"
+#include "enviroment.hpp"
 #include <cassert>
 
 namespace ff {

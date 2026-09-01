@@ -1,4 +1,4 @@
-#include "../include/generator.hpp"
+#include "generator.hpp"
 #include <cstdio>
 #include <llvm/IR/DerivedTypes.h>
 

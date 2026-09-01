@@ -1,4 +1,4 @@
-#include "../include/instructions.hpp"
+#include "instructions.hpp"
 #include <ostream>
 
 namespace ff {

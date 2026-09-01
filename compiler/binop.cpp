@@ -1,4 +1,4 @@
-#include "../include/binop.hpp"
+#include "binop.hpp"
 
 std::string opName(binop op) {
   switch (op) {

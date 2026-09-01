@@ -1,4 +1,4 @@
-#include "../include/graph_function.hpp"
+#include "graph_function.hpp"
 #include <queue>
 
 namespace ff {

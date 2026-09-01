@@ -1,10 +1,10 @@
-#include "../include/ast.hpp"
-#include "../include/cli.hpp"
-#include "../include/driver.hpp"
-#include "../include/error.hpp"
-#include "../include/file_manager.hpp"
-#include "../include/parse_driver.hpp"
-#include "../include/types.hpp"
+#include "ast.hpp"
+#include "cli.hpp"
+#include "driver.hpp"
+#include "error.hpp"
+#include "file_manager.hpp"
+#include "parse_driver.hpp"
+#include "types.hpp"
 #include <iostream>
 
 constexpr std::string objectFile = "object.o";

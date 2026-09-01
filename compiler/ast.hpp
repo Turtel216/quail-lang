@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../include/binop.hpp"
-#include "../include/context.hpp"
-#include "../include/parsed_type.hpp"
-#include "../include/types.hpp"
+#include "binop.hpp"
+#include "context.hpp"
+#include "parsed_type.hpp"
+#include "types.hpp"
 #include "enviroment.hpp"
 #include "generator.hpp"
 #include "graph_function.hpp"

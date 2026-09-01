@@ -1,4 +1,4 @@
-#include "../include/cli.hpp"
+#include "cli.hpp"
 #include "error.hpp"
 #include <iostream>
 #include <stdexcept>

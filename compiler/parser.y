@@ -1,8 +1,8 @@
 %code requires {
 #include <string>
 #include <vector>
-#include "../include/ast.hpp"
-#include "../include/parsed_type.hpp"
+#include "ast.hpp"
+#include "parsed_type.hpp"
 #include "parser.hpp"
 
 namespace ff { namespace drv { class ParseDriver; } }
@@ -10,7 +10,7 @@ using yyscan_t = void*;
 }
 
 %code {
-#include "../include/parse_driver.hpp"
+#include "parse_driver.hpp"
 }
 
 %param { yyscan_t scanner }

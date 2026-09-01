@@ -1,5 +1,5 @@
-#include "../include/parse_driver.hpp"
-#include "../include/error.hpp"
+#include "parse_driver.hpp"
+#include "error.hpp"
 #include "scanner.hpp"
 #include <cstdio>
 
