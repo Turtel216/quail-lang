@@ -4,6 +4,7 @@
 #include <location.hh>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace ff {
@@ -17,9 +18,12 @@ class Variable {
 public:
   std::shared_ptr<TypeScheme> scheme;
   Visibility visibility;
+  std::optional<std::string> mangledName;
 
-  Variable(std::shared_ptr<TypeScheme> s, Visibility v)
-      : scheme(std::move(s)), visibility(v) {}
+  Variable(std::shared_ptr<TypeScheme> s, Visibility v, std::optional<std::string> name)
+      : scheme(std::move(s)), visibility(v), mangledName(std::move(name)) {}
+
+  Variable() : Variable(nullptr, Visibility::Local, std::nullopt) {}
 };
 
 class TypeContext {
@@ -40,6 +44,8 @@ public:
   std::shared_ptr<Type> lookupType(const std::string &name) const;
   void bindType(const std::string &typeName, std::shared_ptr<Type> t,
                 const yy::location &loc = yy::location());
+  void setMangledName(const std::string& name, const std::string& mangled);
+  const std::string& getMangledName(const std::string& name) const;
 
   /* Type variables free in the surrounding bindings, skipping `except`.
    * A binding may only be generalized over the variables this does not

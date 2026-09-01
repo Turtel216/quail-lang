@@ -25,6 +25,28 @@ std::shared_ptr<Type> TypeContext::lookupType(const std::string &name) const {
   return nullptr;
 }
 
+void TypeContext::setMangledName(const std::string& name, const std::string & mangled) {
+  auto it = names.find(name);
+
+  // Variable must exist
+  assert(it != names.end());
+  // Do not mangle local variables 
+  assert(it->second->visibility == Visibility::Global);
+
+  it->second->mangledName = mangled;
+}
+
+  const std::string& TypeContext::getMangledName(const std::string& name) const {
+    auto it = names.find(name);
+    if(it != names.end()) {
+      assert(it->second->mangledName);
+      return *it->second->mangledName;
+    }
+
+    assert(parent != nullptr);
+    return parent->getMangledName(name);
+  }
+
 void TypeContext::bindType(const std::string &typeName, std::shared_ptr<Type> t,
                            const yy::location &loc) {
   if (lookupType(typeName) != nullptr)
@@ -42,7 +64,7 @@ void TypeContext::bind(const std::string &name, std::shared_ptr<Type> t,
 void TypeContext::bind(const std::string &name, std::shared_ptr<TypeScheme> t,
                        Visibility visibility) {
   names[name] =
-      std::shared_ptr<Variable>(new Variable(std::move(t), visibility));
+      std::shared_ptr<Variable>(new Variable(std::move(t), visibility, std::nullopt));
 }
 
 std::shared_ptr<TypeContext> typeScope(std::shared_ptr<TypeContext> parent) {

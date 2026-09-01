@@ -81,7 +81,7 @@ void AstLid::generate(
   into.push_back(std::unique_ptr<ff::ir::Instruction>(
       env->hasVariable(id)
           ? (ff::ir::Instruction *)new ff::ir::Push(env->getOffset(id))
-          : (ff::ir::Instruction *)new ff::ir::PushGlobal(id)));
+          : (ff::ir::Instruction *)new ff::ir::PushGlobal(this->typeContext->getMangledName(id))));
 }
 
 void AstLid::print(int indent, std::ostream &to) const {
@@ -749,7 +749,6 @@ void GlobalScope::add(DefinitionDefn &definition) {
    * suffixed name never collides with a variable in scope where the lifted
    * function is referenced -- which is the very scope that binds the name it
    * was derived from. */
-  definition.mangledName =
-      definition.name + "_" + std::to_string(++occurences[definition.name]);
+  definition.mangledName = mng->newMangledName(definition.name);
   definitions.push_back(&definition);
 }

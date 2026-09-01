@@ -2,6 +2,7 @@
 
 #include "binop.hpp"
 #include "context.hpp"
+#include "mangler.hpp"
 #include "parsed_type.hpp"
 #include "types.hpp"
 #include "enviroment.hpp"
@@ -355,9 +356,11 @@ public:
 class GlobalScope {
 private:
   std::vector<DefinitionDefn *> definitions;
-  std::map<std::string, int> occurences;
+  Mangler* mng;
 
 public:
+  GlobalScope(Mangler& m) : mng(&m) {}
+
   void add(DefinitionDefn &definition);
 
   inline const std::vector<DefinitionDefn *> &getDefinitions() const noexcept {
