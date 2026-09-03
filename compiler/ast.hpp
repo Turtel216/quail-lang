@@ -115,9 +115,12 @@ public:
 class AstLid : public Ast {
 public:
   std::string id;
+  /* Set on the references left behind by lambda lifting, whose id is already
+   * the symbol of a global rather than a name the surrounding scope binds. */
+  bool lifted;
 
   explicit AstLid(std::string i, yy::location lc = yy::location())
-      : Ast(std::move(lc)), id(std::move(i)) {}
+      : Ast(std::move(lc)), id(std::move(i)), lifted(false) {}
 
   std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
 
@@ -360,6 +363,9 @@ private:
 
 public:
   GlobalScope(Mangler& m) : mng(&m) {}
+
+  /* Claim `name` as a symbol, suffixing it if something already took it. */
+  std::string mangle(const std::string &name);
 
   void add(DefinitionDefn &definition);
 

@@ -20,7 +20,10 @@ namespace {
  * applied to each of the variables it captured, in the same order they were
  * prepended to its parameter list. */
 std::unique_ptr<Ast> partialApplication(const DefinitionDefn &definition) {
-  std::unique_ptr<Ast> application(new AstLid(definition.mangledName));
+  AstLid *global = new AstLid(definition.mangledName);
+  global->lifted = true;
+
+  std::unique_ptr<Ast> application(global);
 
   for (auto &captured : definition.capturedVariables) {
     application = std::unique_ptr<Ast>(new AstApp(
@@ -78,10 +81,19 @@ void AstLid::translate(GlobalScope &) {}
 void AstLid::generate(
     const std::shared_ptr<ff::ir::Enviroment> &env,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  /* A lifted reference names its global outright; it was created after
+   * typechecking and so has no scope to resolve the name against. */
+  if (lifted) {
+    into.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::PushGlobal(id)));
+    return;
+  }
+
   into.push_back(std::unique_ptr<ff::ir::Instruction>(
       env->hasVariable(id)
           ? (ff::ir::Instruction *)new ff::ir::Push(env->getOffset(id))
-          : (ff::ir::Instruction *)new ff::ir::PushGlobal(this->typeContext->getMangledName(id))));
+          : (ff::ir::Instruction *)new ff::ir::PushGlobal(
+                this->typeContext->getMangledName(id))));
 }
 
 void AstLid::print(int indent, std::ostream &to) const {
@@ -157,7 +169,7 @@ void AstBinop::generate(
       into);
 
   into.push_back(std::unique_ptr<ff::ir::Instruction>(
-      new ff::ir::PushGlobal(opAction(op))));
+      new ff::ir::PushGlobal(this->typeContext->getMangledName(opName(op)))));
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
 }
@@ -739,16 +751,33 @@ void DefinitionGroup::typecheck(ff::sem::TypeManager &mgr) {
 }
 
 void DefinitionGroup::translate(GlobalScope &scope) {
+  /* Every global claims its symbol before a single body is lifted. A global
+   * is reached by name from anywhere, so it has to keep the name it was
+   * written with -- main above all, which the runtime calls by that name --
+   * and it is the lifted functions that give way and take a suffix. */
+  for (auto &defDefn : defsDefn) {
+    auto &definition = *defDefn.second;
+    if (definition.visibility != ff::sem::Visibility::Global)
+      continue;
+
+    definition.mangledName = scope.mangle(definition.name);
+    definition.typeContext->setMangledName(definition.name,
+                                           definition.mangledName);
+  }
+
   for (auto &defDefn : defsDefn) {
     defDefn.second->translate(scope);
   }
 }
 
+std::string GlobalScope::mangle(const std::string &name) {
+  return mng->newMangledName(name);
+}
+
 void GlobalScope::add(DefinitionDefn &definition) {
-  /* The lexer cannot produce an identifier containing '_' or a digit, so a
-   * suffixed name never collides with a variable in scope where the lifted
-   * function is referenced -- which is the very scope that binds the name it
-   * was derived from. */
-  definition.mangledName = mng->newMangledName(definition.name);
+  /* Two lifted definitions can easily share a name -- every lambda is called
+   * "lambda", and nested lets shadow each other -- so each one takes the
+   * next free variation of it. */
+  definition.mangledName = mangle(definition.name);
   definitions.push_back(&definition);
 }
