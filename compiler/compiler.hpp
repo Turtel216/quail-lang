@@ -27,6 +27,7 @@ private:
   std::string objectFile;
 
         void addDefaultTypes();
+        void addListType();
         void addBinopType(binop op, std::shared_ptr<sem::Type> type);
         void addDefaultFunctionTypes();
         void parseFile(const std::string& path);
@@ -36,6 +37,7 @@ private:
         void compileDefinition(DefinitionDefn &definition);
         void compile();
         void createLLVMBinop(binop op);
+        void createLLVMListConstructors();
         void generateLLVM();
         void outputLLVM();
         void linkToRuntime();

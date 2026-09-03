@@ -128,6 +128,63 @@ void AstUid::print(int indent, std::ostream &to) const {
   to << "INT: " << id << std::endl;
 }
 
+std::shared_ptr<ff::sem::Type> AstList::typecheck(ff::sem::TypeManager &mgr) {
+  auto itemType = mgr.newType();
+  for (auto &item : items) {
+    mgr.unify(itemType, item->typecheck(mgr), item->loc);
+  }
+
+  ff::sem::TypeApp *listApp =
+      new ff::sem::TypeApp(typeContext->lookupType(ff::sem::listTypeName));
+  std::shared_ptr<ff::sem::Type> listType(listApp);
+  listApp->arguments.push_back(std::move(itemType));
+
+  return listType;
+}
+
+void AstList::findFree(ff::sem::TypeManager &mgr,
+                       std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                       std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+  for (auto &item : items) {
+    item->findFree(mgr, typeCtx, into);
+  }
+}
+
+void AstList::translate(GlobalScope &scope) {
+  for (auto &item : items) {
+    item->translate(scope);
+  }
+}
+
+void AstList::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(
+      new ff::ir::PushGlobal(ff::sem::listNilName)));
+
+  /* Built back to front, so that the tail an item is consed onto is already
+   * the single slot sitting on top of the stack. */
+  for (auto it = items.rbegin(); it != items.rend(); it++) {
+    (*it)->generate(std::shared_ptr<ff::ir::Enviroment>(
+                        new ff::ir::EnviromentOffset(1, env)),
+                    into);
+
+    into.push_back(std::unique_ptr<ff::ir::Instruction>(
+        new ff::ir::PushGlobal(ff::sem::listConsName)));
+    into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
+    into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
+  }
+}
+
+void AstList::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "LIST:" << std::endl;
+  for (auto &item : items) {
+    item->print(indent + 1, to);
+  }
+}
+
 std::shared_ptr<ff::sem::Type> AstBinop::typecheck(ff::sem::TypeManager &mgr) {
   auto ltype = left->typecheck(mgr);
   auto rtype = right->typecheck(mgr);
@@ -676,25 +733,31 @@ void DefinitionData::insertConstructors() const {
   }
 }
 
+void generateConstructorLLVM(ff::cg::CodeGenerator &generator,
+                             const std::string &name, int tag,
+                             std::size_t arity) {
+  auto newFunction = generator.createCustomFunction(name, arity);
+
+  std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pack(tag, arity)));
+
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(0)));
+
+  generator.builder.SetInsertPoint(&newFunction->getEntryBlock());
+  for (auto &instruction : instructions) {
+    instruction->generate(generator, newFunction);
+  }
+
+  generator.builder.CreateRetVoid();
+}
+
 void DefinitionData::generateLLVM(ff::cg::CodeGenerator &generator) {
   for (auto &constructor : constructors) {
-    auto newFunction = generator.createCustomFunction(
-        constructor->name, constructor->types.size());
-
-    std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
-
-    instructions.push_back(std::unique_ptr<ff::ir::Instruction>(
-        new ff::ir::Pack(constructor->tag, constructor->types.size())));
-
-    instructions.push_back(
-        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(0)));
-
-    generator.builder.SetInsertPoint(&newFunction->getEntryBlock());
-    for (auto &instruction : instructions) {
-      instruction->generate(generator, newFunction);
-    }
-
-    generator.builder.CreateRetVoid();
+    generateConstructorLLVM(generator, constructor->name, constructor->tag,
+                            constructor->types.size());
   }
 }
 
@@ -753,7 +816,7 @@ void DefinitionGroup::typecheck(ff::sem::TypeManager &mgr) {
 void DefinitionGroup::translate(GlobalScope &scope) {
   /* Every global claims its symbol before a single body is lifted. A global
    * is reached by name from anywhere, so it has to keep the name it was
-   * written with -- main above all, which the runtime calls by that name --
+   * written with, which the runtime calls by that name
    * and it is the lifted functions that give way and take a suffix. */
   for (auto &defDefn : defsDefn) {
     auto &definition = *defDefn.second;
@@ -775,8 +838,8 @@ std::string GlobalScope::mangle(const std::string &name) {
 }
 
 void GlobalScope::add(DefinitionDefn &definition) {
-  /* Two lifted definitions can easily share a name -- every lambda is called
-   * "lambda", and nested lets shadow each other -- so each one takes the
+  /* Two lifted definitions can easily share a name, every lambda is called
+   * "lambda", and nested lets shadow each other, so each one takes the
    * next free variation of it. */
   definition.mangledName = mangle(definition.name);
   definitions.push_back(&definition);

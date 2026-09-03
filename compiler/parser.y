@@ -29,6 +29,8 @@ using yyscan_t = void*;
 %token CCURLY
 %token OPAREN
 %token CPAREN
+%token OBRACKET
+%token CBRACKET
 %token COMMA
 %token ARROW
 %token EQUAL
@@ -45,9 +47,10 @@ using yyscan_t = void*;
 %define parse.error verbose
 
 %type <std::vector<std::string>> lowercaseParams uppercaseParams
+%type <std::vector<std::unique_ptr<Ast>>> listItems
 %type <std::vector<std::unique_ptr<Branch>>> branches
 %type <std::vector<std::unique_ptr<Constructor>>> constructors
-%type <std::unique_ptr<Ast>> aAdd aMul case lambda let app appBase
+%type <std::unique_ptr<Ast>> aAdd aMul case lambda let list app appBase
 %type <std::unique_ptr<DefinitionData>> data
 %type <std::unique_ptr<DefinitionDefn>> defn
 %type <std::unique_ptr<DefinitionGroup>> letDefinitions
@@ -116,6 +119,20 @@ appBase
     | case { $$ = std::move($1); }
     | lambda { $$ = std::move($1); }
     | let { $$ = std::move($1); }
+    | list { $$ = std::move($1); }
+    ;
+
+list
+    : OBRACKET CBRACKET
+        { $$ = std::unique_ptr<Ast>(new AstList(std::vector<std::unique_ptr<Ast>>(), @$)); }
+    | OBRACKET listItems CBRACKET
+        { $$ = std::unique_ptr<Ast>(new AstList(std::move($2), @$)); }
+    ;
+
+listItems
+    : listItems COMMA aAdd { $$ = std::move($1); $$.push_back(std::move($3)); }
+    | aAdd
+        { $$ = std::vector<std::unique_ptr<Ast>>(); $$.push_back(std::move($1)); }
     ;
 
 case

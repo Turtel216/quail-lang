@@ -37,6 +37,8 @@ in { return yy::parser::make_IN(LOC); }
 \} { return yy::parser::make_CCURLY(LOC); }
 \( { return yy::parser::make_OPAREN(LOC); }
 \) { return yy::parser::make_CPAREN(LOC); }
+\[ { return yy::parser::make_OBRACKET(LOC); }
+\] { return yy::parser::make_CBRACKET(LOC); }
 ,  { return yy::parser::make_COMMA(LOC); }
 -> { return yy::parser::make_ARROW(LOC); }
 = { return yy::parser::make_EQUAL(LOC); }

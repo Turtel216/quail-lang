@@ -10,6 +10,15 @@
 namespace ff {
 namespace sem {
 
+/* The built-in list type and its constructors. The compiler registers these
+ * itself instead of letting the prelude declare them, so that the [...]
+ * syntax always has a type to build. */
+inline constexpr const char *listTypeName = "List";
+inline constexpr const char *listNilName = "Nil";
+inline constexpr const char *listConsName = "Cons";
+inline constexpr int listNilTag = 0;
+inline constexpr int listConsTag = 1;
+
 class TypeManager;
 
 class Type {

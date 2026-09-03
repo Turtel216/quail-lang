@@ -34,6 +34,39 @@ namespace ff {
 
     void Compiler::addDefaultTypes() {
       globalContext->bindType("Int", std::unique_ptr<sem::Type>(new sem::TypeBase("Int")));
+      addListType();
+    }
+
+    /* List is built in rather than declared in the prelude, so that a list
+     * literal always has a type to build. Everything else about it matches
+     * the data type it used to be: the same two constructors, bound as
+     * globals under the same names and tags. */
+    void Compiler::addListType() {
+      constexpr const char *itemVar = "a";
+
+      sem::TypeData *listData = new sem::TypeData(sem::listTypeName, 1);
+      std::shared_ptr<sem::Type> listType(listData);
+      listData->constructors[sem::listNilName] = {sem::listNilTag};
+      listData->constructors[sem::listConsName] = {sem::listConsTag};
+      globalContext->bindType(sem::listTypeName, listType);
+
+      std::shared_ptr<sem::Type> itemType(new sem::TypeVar(itemVar));
+      sem::TypeApp *listApp = new sem::TypeApp(std::move(listType));
+      std::shared_ptr<sem::Type> listOfItem(listApp);
+      listApp->arguments.push_back(itemType);
+
+      // Nil : forall a. List a
+      std::shared_ptr<sem::TypeScheme> nilScheme(new sem::TypeScheme(listOfItem));
+      nilScheme->forall.push_back(itemVar);
+      globalContext->bind(sem::listNilName, std::move(nilScheme), sem::Visibility::Global);
+
+      // Cons : forall a. a -> List a -> List a
+      std::shared_ptr<sem::Type> consType(new sem::TypeArr(
+          std::move(itemType),
+          std::shared_ptr<sem::Type>(new sem::TypeArr(listOfItem, listOfItem))));
+      std::shared_ptr<sem::TypeScheme> consScheme(new sem::TypeScheme(std::move(consType)));
+      consScheme->forall.push_back(itemVar);
+      globalContext->bind(sem::listConsName, std::move(consScheme), sem::Visibility::Global);
     }
 
     void Compiler::addBinopType(binop op, std::shared_ptr<sem::Type> type) {
@@ -141,11 +174,17 @@ namespace ff {
   generator.builder.CreateRetVoid();
     }
 
+    void Compiler::createLLVMListConstructors() {
+      generateConstructorLLVM(generator, sem::listNilName, sem::listNilTag, 0);
+      generateConstructorLLVM(generator, sem::listConsName, sem::listConsTag, 2);
+    }
+
     void Compiler::generateLLVM() {
   createLLVMBinop(PLUS);
   createLLVMBinop(MINUS);
   createLLVMBinop(TIMES);
   createLLVMBinop(DIVIDE);
+  createLLVMListConstructors();
 
   for (auto &defData : globalDefs.defsData) {
     defData.second->generateLLVM(generator);

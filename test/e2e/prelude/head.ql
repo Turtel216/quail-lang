@@ -1,7 +1,7 @@
 // RUN: %qc %s -o %t
 // RUN: %t | FileCheck %s
 
-fun list = { Cons 42 (Cons 1 (Cons 1 (Cons 1 Nil))) }
+fun list = { [42, 1, 1, 1] }
 
 fun main = {
   match head list with {

@@ -1,7 +1,7 @@
 // RUN: %qc %s -o %t
 // RUN: %t | FileCheck %s
 
-fun list = { Cons 0 (Cons 0 (Cons 0 Nil)) }
+fun list = { [0, 0, 0] }
 
 fun addOne x = { x + 1 }
 fun add x y = { x + y }

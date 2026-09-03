@@ -8,7 +8,7 @@ type Bool = { True , False}
 fun not b = {
     match b with {
           True -> { False }
-          False -> { False }
+          False -> { True }
     }
 }
 
@@ -17,11 +17,6 @@ fun if c t e = {
           True -> { t }
           False -> { e }
     }
-}
-
-type List a = { 
-    Nil, 
-    Cons a (List a) 
 }
 
 fun map f l = {

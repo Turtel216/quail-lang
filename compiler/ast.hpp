@@ -158,6 +158,31 @@ public:
   void print(int indent, std::ostream &to) const override;
 };
 
+/* A list literal. It stands for the same chain of Cons applications ending
+ * in Nil that writing them out by hand would build. */
+class AstList : public Ast {
+public:
+  std::vector<std::unique_ptr<Ast>> items;
+
+  explicit AstList(std::vector<std::unique_ptr<Ast>> i,
+                   yy::location lc = yy::location())
+      : Ast(std::move(lc)), items(std::move(i)) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
+
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
+
+  void translate(GlobalScope &scope) override;
+
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void print(int indent, std::ostream &to) const override;
+};
+
 class AstBinop : public Ast {
 public:
   binop op;
@@ -313,6 +338,13 @@ public: // TODO: Fix encapsulation
   void declareLLVM(ff::cg::CodeGenerator &generator);
   void generateLLVM(ff::cg::CodeGenerator &generator);
 };
+
+/* Emit the supercombinator behind a data constructor: pack its arguments
+ * into a data node and update the redex with it. Shared by declared data
+ * types and by the built-in list. */
+void generateConstructorLLVM(ff::cg::CodeGenerator &generator,
+                             const std::string &name, int tag,
+                             std::size_t arity);
 
 class DefinitionData {
 public:
