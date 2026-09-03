@@ -30,80 +30,87 @@ static const char *const runtimeSources[] = {
 static const char *const preludePath = "prelude/Base.ql";
 
 namespace ff {
-  namespace drv {
+namespace drv {
 
-    void Compiler::addDefaultTypes() {
-      globalContext->bindType("Int", std::unique_ptr<sem::Type>(new sem::TypeBase("Int")));
-      addListType();
-    }
+void Compiler::addDefaultTypes() {
+  globalContext->bindType("Int",
+                          std::unique_ptr<sem::Type>(new sem::TypeBase("Int")));
+  addListType();
+}
 
-    /* List is built in rather than declared in the prelude, so that a list
-     * literal always has a type to build. Everything else about it matches
-     * the data type it used to be: the same two constructors, bound as
-     * globals under the same names and tags. */
-    void Compiler::addListType() {
-      constexpr const char *itemVar = "a";
+/* List is built in rather than declared in the prelude, so that a list
+ * literal always has a type to build. Everything else about it matches
+ * the data type it used to be: the same two constructors, bound as
+ * globals under the same names and tags. */
+void Compiler::addListType() {
+  constexpr const char *itemVar = "a";
 
-      sem::TypeData *listData = new sem::TypeData(sem::listTypeName, 1);
-      std::shared_ptr<sem::Type> listType(listData);
-      listData->constructors[sem::listNilName] = {sem::listNilTag};
-      listData->constructors[sem::listConsName] = {sem::listConsTag};
-      globalContext->bindType(sem::listTypeName, listType);
+  sem::TypeData *listData = new sem::TypeData(sem::listTypeName, 1);
+  std::shared_ptr<sem::Type> listType(listData);
+  listData->constructors[sem::listNilName] = {sem::listNilTag};
+  listData->constructors[sem::listConsName] = {sem::listConsTag};
+  globalContext->bindType(sem::listTypeName, listType);
 
-      std::shared_ptr<sem::Type> itemType(new sem::TypeVar(itemVar));
-      sem::TypeApp *listApp = new sem::TypeApp(std::move(listType));
-      std::shared_ptr<sem::Type> listOfItem(listApp);
-      listApp->arguments.push_back(itemType);
+  std::shared_ptr<sem::Type> itemType(new sem::TypeVar(itemVar));
+  sem::TypeApp *listApp = new sem::TypeApp(std::move(listType));
+  std::shared_ptr<sem::Type> listOfItem(listApp);
+  listApp->arguments.push_back(itemType);
 
-      // Nil : forall a. List a
-      std::shared_ptr<sem::TypeScheme> nilScheme(new sem::TypeScheme(listOfItem));
-      nilScheme->forall.push_back(itemVar);
-      globalContext->bind(sem::listNilName, std::move(nilScheme), sem::Visibility::Global);
+  // Nil : forall a. List a
+  std::shared_ptr<sem::TypeScheme> nilScheme(new sem::TypeScheme(listOfItem));
+  nilScheme->forall.push_back(itemVar);
+  globalContext->bind(sem::listNilName, std::move(nilScheme),
+                      sem::Visibility::Global);
 
-      // Cons : forall a. a -> List a -> List a
-      std::shared_ptr<sem::Type> consType(new sem::TypeArr(
-          std::move(itemType),
-          std::shared_ptr<sem::Type>(new sem::TypeArr(listOfItem, listOfItem))));
-      std::shared_ptr<sem::TypeScheme> consScheme(new sem::TypeScheme(std::move(consType)));
-      consScheme->forall.push_back(itemVar);
-      globalContext->bind(sem::listConsName, std::move(consScheme), sem::Visibility::Global);
-    }
+  // Cons : forall a. a -> List a -> List a
+  std::shared_ptr<sem::Type> consType(new sem::TypeArr(
+      std::move(itemType),
+      std::shared_ptr<sem::Type>(new sem::TypeArr(listOfItem, listOfItem))));
+  std::shared_ptr<sem::TypeScheme> consScheme(
+      new sem::TypeScheme(std::move(consType)));
+  consScheme->forall.push_back(itemVar);
+  globalContext->bind(sem::listConsName, std::move(consScheme),
+                      sem::Visibility::Global);
+}
 
-    void Compiler::addBinopType(binop op, std::shared_ptr<sem::Type> type) {
-      auto name = mangler.newMangledName(opAction(op));
+void Compiler::addBinopType(binop op, std::shared_ptr<sem::Type> type) {
+  auto name = mangler.newMangledName(opAction(op));
 
-      globalContext->bind(opName(op), std::move(type), sem::Visibility::Global);
-      globalContext->setMangledName(opName(op), name);
-    }
+  globalContext->bind(opName(op), std::move(type), sem::Visibility::Global);
+  globalContext->setMangledName(opName(op), name);
+}
 
-    void Compiler::addDefaultFunctionTypes() {
+void Compiler::addDefaultFunctionTypes() {
 
-      std::shared_ptr<sem::Type> intType = globalContext->lookupType("Int");
-    assert(intType != nullptr);
-    std::shared_ptr<sem::Type> intTypeApp = std::shared_ptr<sem::Type>(new sem::TypeApp(intType));
+  std::shared_ptr<sem::Type> intType = globalContext->lookupType("Int");
+  assert(intType != nullptr);
+  std::shared_ptr<sem::Type> intTypeApp =
+      std::shared_ptr<sem::Type>(new sem::TypeApp(intType));
 
-    std::shared_ptr<sem::Type> closedIntOpType(
-            new sem::TypeArr(intTypeApp, std::shared_ptr<sem::Type>(new sem::TypeArr(intTypeApp, intTypeApp))));
+  std::shared_ptr<sem::Type> closedIntOpType(new sem::TypeArr(
+      intTypeApp,
+      std::shared_ptr<sem::Type>(new sem::TypeArr(intTypeApp, intTypeApp))));
 
-    constexpr binop closedOps[] = { PLUS, MINUS, TIMES, DIVIDE };
-    for(auto& op : closedOps) addBinopType(op, closedIntOpType);
-    }
+  constexpr binop closedOps[] = {PLUS, MINUS, TIMES, DIVIDE};
+  for (auto &op : closedOps)
+    addBinopType(op, closedIntOpType);
+}
 
-    void Compiler::parseFile(const std::string& path) {
-      ParseDriver driver(fileManager, globalDefs, path);
-      if(!driver())
-        throw CompilerError("could not open file " + path);
-    }
+void Compiler::parseFile(const std::string &path) {
+  ParseDriver driver(fileManager, globalDefs, path);
+  if (!driver())
+    throw CompilerError("could not open file " + path);
+}
 
-    void Compiler::parse() {
-      parseFile(preludePath);
-      parseFile(inputFile);
-    }
+void Compiler::parse() {
+  parseFile(preludePath);
+  parseFile(inputFile);
+}
 
-  void Compiler::typecheck() {
+void Compiler::typecheck() {
   std::set<std::string> freeVariables;
   globalDefs.findFree(manager, globalContext, ff::sem::Visibility::Global,
-                   freeVariables);
+                      freeVariables);
 
   /* Nothing encloses the top level, so anything still free here that is not
    * already bound -- a constructor, an operator -- has no definition. */
@@ -119,36 +126,35 @@ namespace ff {
     pair.second->scheme->print(manager, std::cout);
     std::cout << std::endl;
   }
-    }
+}
 
-    void Compiler::translate() {
-      globalDefs.translate(globalScope);
-    }
+void Compiler::translate() { globalDefs.translate(globalScope); }
 
-    void Compiler::compile() {
- for (auto &defDefn : globalDefs.defsDefn) {
+void Compiler::compile() {
+  for (auto &defDefn : globalDefs.defsDefn) {
     compileDefinition(*defDefn.second);
   }
 
   for (auto *definition : globalScope.getDefinitions()) {
     compileDefinition(*definition);
   }
-    }
+}
 
-    void Compiler::compileDefinition(DefinitionDefn &definition) {
-        definition.compile();
-    }
+void Compiler::compileDefinition(DefinitionDefn &definition) {
+  definition.compile();
+}
 
-    Compiler::Compiler(const std::string& input, const std::string& output) : fileManager(), globalDefs(),
-    globalContext(new sem::TypeContext), mangler(), manager(), globalScope(mangler), generator(), inputFile(input), outputFile(output),
-    objectFile("object.o") {
-      addDefaultTypes();
-      addDefaultFunctionTypes();
-    }
+Compiler::Compiler(const std::string &input, const std::string &output)
+    : fileManager(), globalDefs(), globalContext(new sem::TypeContext),
+      mangler(), manager(), globalScope(mangler), generator(), inputFile(input),
+      outputFile(output), objectFile("object.o") {
+  addDefaultTypes();
+  addDefaultFunctionTypes();
+}
 
-    void Compiler::createLLVMBinop(binop op) {
- auto newFunction =
-      generator.createCustomFunction(globalContext->getMangledName(opName(op)), 2);
+void Compiler::createLLVMBinop(binop op) {
+  auto newFunction = generator.createCustomFunction(
+      globalContext->getMangledName(opName(op)), 2);
 
   std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
   instructions.push_back(
@@ -166,20 +172,20 @@ namespace ff {
   instructions.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(2)));
 
-  generator.builder.SetInsertPoint(&newFunction->getEntryBlock());
+  generator.getBuilder().SetInsertPoint(&newFunction->getEntryBlock());
   for (auto &instruction : instructions) {
     instruction->generate(generator, newFunction);
   }
 
-  generator.builder.CreateRetVoid();
-    }
+  generator.getBuilder().CreateRetVoid();
+}
 
-    void Compiler::createLLVMListConstructors() {
-      generateConstructorLLVM(generator, sem::listNilName, sem::listNilTag, 0);
-      generateConstructorLLVM(generator, sem::listConsName, sem::listConsTag, 2);
-    }
+void Compiler::createLLVMListConstructors() {
+  generateConstructorLLVM(generator, sem::listNilName, sem::listNilTag, 0);
+  generateConstructorLLVM(generator, sem::listConsName, sem::listConsTag, 2);
+}
 
-    void Compiler::generateLLVM() {
+void Compiler::generateLLVM() {
   createLLVMBinop(PLUS);
   createLLVMBinop(MINUS);
   createLLVMBinop(TIMES);
@@ -206,12 +212,12 @@ namespace ff {
     definition->generateLLVM(generator);
   }
 
-  generator.module.print(llvm::outs(), nullptr);
-    }
+  generator.getModule().print(llvm::outs(), nullptr);
+}
 
-    void Compiler::outputLLVM() {
+void Compiler::outputLLVM() {
 
- llvm::Triple targetTriple(llvm::sys::getDefaultTargetTriple());
+  llvm::Triple targetTriple(llvm::sys::getDefaultTargetTriple());
 
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmParser();
@@ -231,8 +237,8 @@ namespace ff {
       target->createTargetMachine(targetTriple, cpu, features, options,
                                   std::optional<llvm::Reloc::Model>());
 
-  generator.module.setDataLayout(targetMachine->createDataLayout());
-  generator.module.setTargetTriple(targetTriple);
+  generator.getModule().setDataLayout(targetMachine->createDataLayout());
+  generator.getModule().setTargetTriple(targetTriple);
 
   std::error_code ec;
   llvm::raw_fd_ostream file(objectFile, ec, llvm::sys::fs::OF_None);
@@ -244,30 +250,26 @@ namespace ff {
   if (targetMachine->addPassesToEmitFile(pm, file, NULL, type))
     throw ff::CompilerError("the target machine cannot emit an object file");
 
-  pm.run(generator.module);
+  pm.run(generator.getModule());
   file.close();
-    }
+}
 
-    void Compiler::operator()() {
-      parse();
-      typecheck();
-      translate();
-      compile();
-      generateLLVM();
-      outputLLVM();
-      linkToRuntime();
-      cleanUp();
-    }
+void Compiler::operator()() {
+  parse();
+  typecheck();
+  translate();
+  compile();
+  generateLLVM();
+  outputLLVM();
+  linkToRuntime();
+  cleanUp();
+}
 
+FileManager &Compiler::getFileManager() { return this->fileManager; }
 
-        FileManager& Compiler::getFileManager() {
-          return this->fileManager;
-        }
-
-        const sem::TypeManager& Compiler::getTypeManager() const {
-          return this->manager;
-        }
-
+const sem::TypeManager &Compiler::getTypeManager() const {
+  return this->manager;
+}
 
 void Compiler::linkToRuntime() {
   std::string command = "gcc -std=c11 -g -no-pie";
@@ -286,5 +288,5 @@ void Compiler::cleanUp() {
   std::string command = "rm " + objectFile;
   std::system(command.c_str());
 }
-  }
-}
+} // namespace drv
+} // namespace ff

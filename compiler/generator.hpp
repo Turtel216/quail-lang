@@ -22,6 +22,10 @@ private:
   std::map<std::string, llvm::Function *> functions;
   std::map<std::string, llvm::StructType *> structTypes;
 
+  llvm::LLVMContext ctx;
+  llvm::IRBuilder<> builder;
+  llvm::Module module;
+
   llvm::StructType *stackType;
   llvm::StructType *gmachineType;
   llvm::PointerType *stackPointerType;
@@ -31,17 +35,19 @@ private:
   llvm::FunctionType *functionType;
 
 public:
-  CodeGenerator() : builder(ctx), module("ff", ctx) {
+  CodeGenerator() : builder(ctx), module("quail", ctx) {
     this->createTypes();
     this->createFunctions();
   }
 
-  llvm::LLVMContext ctx;
-  llvm::IRBuilder<> builder;
-  llvm::Module module;
-
   void createTypes();
   void createFunctions();
+
+  llvm::IRBuilder<> &getBuilder() noexcept;
+  llvm::Module &getModule() noexcept;
+  llvm::BasicBlock *createBasicBlock(const std::string &name,
+                                     llvm::Function *f) noexcept;
+  CustomFunction &getCustomFunction(const std::string &name);
 
   llvm::ConstantInt *createI8(std::int8_t);
   llvm::ConstantInt *createI32(std::int32_t);
@@ -69,11 +75,6 @@ public:
   llvm::Value *createApp(llvm::Function *, llvm::Value *, llvm::Value *);
 
   llvm::Function *createCustomFunction(std::string name, int32_t arity);
-
-  const inline std::map<std::string, std::unique_ptr<CustomFunction>> &
-  getCustomeFunctions() const noexcept {
-    return this->customFunctions;
-  }
 };
 } // namespace cg
 } // namespace ff

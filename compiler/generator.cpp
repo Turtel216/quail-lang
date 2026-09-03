@@ -1,6 +1,7 @@
 #include "generator.hpp"
 #include <cstdio>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/Target/TargetOptions.h>
 
 namespace ff {
 namespace cg {
@@ -302,6 +303,22 @@ void CodeGenerator::createUnwind(llvm::Function *f) {
 llvm::Value *CodeGenerator::unwrapGmachineStackPtr(llvm::Value *g) {
   auto offset0 = this->createI32(0);
   return builder.CreateGEP(this->gmachineType, g, {offset0, offset0});
+}
+
+llvm::IRBuilder<> &CodeGenerator::getBuilder() noexcept {
+  return this->builder;
+}
+
+llvm::Module &CodeGenerator::getModule() noexcept { return this->module; }
+
+llvm::BasicBlock *CodeGenerator::createBasicBlock(const std::string &name,
+                                                  llvm::Function *f) noexcept {
+  return llvm::BasicBlock::Create(this->ctx, name, f);
+}
+
+CodeGenerator::CustomFunction &
+CodeGenerator::getCustomFunction(const std::string &name) {
+  return *this->customFunctions.at("f_" + name);
 }
 } // namespace cg
 } // namespace ff

@@ -2,9 +2,9 @@
 
 #include "context.hpp"
 #include "enviroment.hpp"
-#include "types.hpp"
 #include "error.hpp"
 #include "instructions.hpp"
+#include "types.hpp"
 #include <cassert>
 #include <iostream>
 #include <memory>
@@ -672,11 +672,11 @@ void DefinitionDefn::declareLLVM(ff::cg::CodeGenerator &generator) {
 }
 
 void DefinitionDefn::generateLLVM(ff::cg::CodeGenerator &generator) {
-  generator.builder.SetInsertPoint(&generatedFunction->getEntryBlock());
+  generator.getBuilder().SetInsertPoint(&generatedFunction->getEntryBlock());
   for (auto &instruction : instructions) {
     instruction->generate(generator, generatedFunction);
   }
-  generator.builder.CreateRetVoid();
+  generator.getBuilder().CreateRetVoid();
 }
 
 void DefinitionData::insertTypes(
@@ -746,12 +746,12 @@ void generateConstructorLLVM(ff::cg::CodeGenerator &generator,
   instructions.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(0)));
 
-  generator.builder.SetInsertPoint(&newFunction->getEntryBlock());
+  generator.getBuilder().SetInsertPoint(&newFunction->getEntryBlock());
   for (auto &instruction : instructions) {
     instruction->generate(generator, newFunction);
   }
 
-  generator.builder.CreateRetVoid();
+  generator.getBuilder().CreateRetVoid();
 }
 
 void DefinitionData::generateLLVM(ff::cg::CodeGenerator &generator) {

@@ -1,5 +1,3 @@
-type List a = { Nil, Cons a (List a) }
-
 fun map f l = {
     match l with {
         Nil -> { Nil }
@@ -21,7 +19,7 @@ fun foldr f b l = {
     }
 }
 
-fun list = { Cons 1 (Cons 2 (Cons 3 (Cons 4 Nil))) }
+fun list = { [1, 2, 3, 4] }
 
 fun add x y = { x + y }
 fun sum l = { foldr add 0 l }

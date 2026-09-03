@@ -20,10 +20,10 @@ void PushInt::print(int indent, std::ostream &to) const {
 
 void PushGlobal::generate(cg::CodeGenerator &generator,
                           llvm::Function *f) const {
-  auto &global = generator.getCustomeFunctions().at("f_" + name);
+  auto &global = generator.getCustomFunction(name);
 
-  auto arity = generator.createI32(global->arity);
-  generator.createPush(f, generator.createGlobal(f, global->function, arity));
+  auto arity = generator.createI32(global.arity);
+  generator.createPush(f, generator.createGlobal(f, global.function, arity));
 }
 
 void PushGlobal::print(int indent, std::ostream &to) const {
@@ -93,20 +93,20 @@ void Split::print(int indent, std::ostream &to) const {
 void Jump::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
   auto topNode = generator.createPeek(f, generator.createSize(0));
   auto tag = generator.unwrapDataTag(topNode);
-  auto safetyBlock = llvm::BasicBlock::Create(generator.ctx, "safety", f);
+  auto safetyBlock = generator.createBasicBlock("safety", f);
   auto switchOp =
-      generator.builder.CreateSwitch(tag, safetyBlock, tagMappings.size());
+      generator.getBuilder().CreateSwitch(tag, safetyBlock, tagMappings.size());
 
   std::vector<llvm::BasicBlock *> blocks;
   for (auto &branch : this->branches) {
-    auto branchBlock = llvm::BasicBlock::Create(generator.ctx, "branch", f);
-    generator.builder.SetInsertPoint(branchBlock);
+    auto branchBlock = generator.createBasicBlock("branch", f);
+    generator.getBuilder().SetInsertPoint(branchBlock);
 
     for (auto &instruction : branch) {
       instruction->generate(generator, f);
     }
 
-    generator.builder.CreateBr(safetyBlock);
+    generator.getBuilder().CreateBr(safetyBlock);
     blocks.push_back(branchBlock);
   }
 
@@ -115,7 +115,7 @@ void Jump::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
                       blocks[mapping.second]);
   }
 
-  generator.builder.SetInsertPoint(safetyBlock);
+  generator.getBuilder().SetInsertPoint(safetyBlock);
 }
 
 void Jump::print(int indent, std::ostream &to) const {
@@ -147,16 +147,16 @@ void Binop::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
   llvm::Value *result;
   switch (op) {
   case PLUS:
-    result = generator.builder.CreateAdd(leftInt, rightInt);
+    result = generator.getBuilder().CreateAdd(leftInt, rightInt);
     break;
   case MINUS:
-    result = generator.builder.CreateSub(leftInt, rightInt);
+    result = generator.getBuilder().CreateSub(leftInt, rightInt);
     break;
   case TIMES:
-    result = generator.builder.CreateMul(leftInt, rightInt);
+    result = generator.getBuilder().CreateMul(leftInt, rightInt);
     break;
   case DIVIDE:
-    result = generator.builder.CreateSDiv(leftInt, rightInt);
+    result = generator.getBuilder().CreateSDiv(leftInt, rightInt);
     break;
   }
 
