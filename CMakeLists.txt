@@ -73,10 +73,11 @@ set(SRC_FILES
     compiler/enviroment.cpp
     compiler/generator.cpp
     compiler/cli.cpp
-    compiler/driver.cpp
     compiler/parse_driver.cpp
     compiler/file_manager.cpp
     compiler/graph_function.cpp
+    compiler/compiler.cpp
+    compiler/mangler.cpp
 )
 
 # Main executable
