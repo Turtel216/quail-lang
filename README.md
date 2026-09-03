@@ -13,6 +13,7 @@ The Quail toolchain includes `qc`, an Ahead-of-Time (AOT) compiler written in C+
 * **Strong Static Typing:** A Hindley-Milner type system ensures type safety at compile time without the need for verbose type annotations.
 * **Parametric Polymorphism:** Full support for polymorphic functions and polymorphic data types (e.g., generics).
 * **Pattern Matching:** Expressive `match ... with` syntax for destructing Algebraic Data Types (ADTs).
+* **Built-in Lists:** A primitive `List` type with bracket syntax (`[1, 2, 3]`) for literals.
 * **AOT Compilation:** Compiles directly to native machine code via LLVM, avoiding interpreter overhead.
 * **Memory Management:** Automatic garbage collection handles the allocation and cleanup of the G-Machine graph.
 
@@ -38,9 +39,9 @@ type Option a = {
     Some a 
 }
 
-type List a = { 
-    Nil, 
-    Cons a (List a) 
+type Tree a = { 
+    Leaf, 
+    Node a (Tree a) (Tree a) 
 }
 
 ```
@@ -61,6 +62,33 @@ fun add x y = {
     x + y
 }
 
+```
+
+### Lists
+
+`List` is built into the compiler, with the constructors `Nil` and `Cons`.
+A list is written between brackets, and its elements must all have the same
+type:
+
+```quail
+fun numbers = { [1, 2, 3, 4] }
+
+fun flags = { [True, True, False] }
+
+fun empty = { [] }
+```
+
+The brackets are shorthand: `[1, 2, 3]` builds exactly the same graph as
+`Cons 1 (Cons 2 (Cons 3 Nil))`, and both spellings may be mixed freely.
+Lists are taken apart by matching on the two constructors:
+
+```quail
+fun sum l = {
+    match l with {
+        Nil -> { 0 }
+        Cons x xs -> { x + sum xs }
+    }
+}
 ```
 
 ### Lambdas
@@ -91,7 +119,7 @@ fun main = {
             }
         }
     } in {
-        total (Cons 1 (Cons 2 (Cons 3 Nil)))
+        total [1, 2, 3]
     }
 }
 ```
