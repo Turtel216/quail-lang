@@ -8,6 +8,7 @@
 #include <cassert>
 #include <iostream>
 #include <memory>
+#include <sstream>
 
 void printIndent(int n, std::ostream &to) {
   while (n--)
@@ -278,6 +279,64 @@ void AstApp::print(int indent, std::ostream &to) const {
   to << "APP:" << std::endl;
   left->print(indent + 1, to);
   right->print(indent + 1, to);
+}
+
+std::shared_ptr<ff::sem::Type> AstPipe::typecheck(ff::sem::TypeManager &mgr) {
+  auto valueType = value->typecheck(mgr);
+  auto functionType = function->typecheck(mgr);
+
+  /* A right side already known not to be a function is worth saying so
+   * outright; unifying it would only report a mismatch against an arrow the
+   * program never wrote. */
+  ff::sem::TypeVar *var;
+  auto resolved = mgr.resolve(functionType, var);
+  if (!var && !dynamic_cast<ff::sem::TypeArr *>(resolved.get())) {
+    std::ostringstream errorStream;
+    errorStream << "the right side of |> is not a function, its type is ";
+    resolved->print(mgr, errorStream);
+
+    throw ff::TypeError(errorStream.str(), function->loc);
+  }
+
+  auto returnType = mgr.newType();
+  auto arrow = std::shared_ptr<ff::sem::Type>(
+      new ff::sem::TypeArr(valueType, returnType));
+
+  mgr.unify(functionType, arrow, loc);
+  return returnType;
+}
+
+void AstPipe::findFree(ff::sem::TypeManager &mgr,
+                       std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                       std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+  value->findFree(mgr, typeCtx, into);
+  function->findFree(mgr, typeCtx, into);
+}
+
+void AstPipe::translate(GlobalScope &scope) {
+  value->translate(scope);
+  function->translate(scope);
+}
+
+void AstPipe::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  /* The argument goes down first, exactly as for a written-out application;
+   * only the two sides trade places. */
+  this->value->generate(env, into);
+  this->function->generate(std::shared_ptr<ff::ir::Enviroment>(
+                               new ff::ir::EnviromentOffset(1, env)),
+                           into);
+
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
+}
+
+void AstPipe::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "PIPE:" << std::endl;
+  value->print(indent + 1, to);
+  function->print(indent + 1, to);
 }
 
 void AstCase::findFree(ff::sem::TypeManager &mgr,

@@ -41,6 +41,7 @@ in { return yy::parser::make_IN(LOC); }
 \] { return yy::parser::make_CBRACKET(LOC); }
 ,  { return yy::parser::make_COMMA(LOC); }
 -> { return yy::parser::make_ARROW(LOC); }
+\|> { return yy::parser::make_PIPE(LOC); }
 = { return yy::parser::make_EQUAL(LOC); }
 [a-z][a-zA-Z]* { return yy::parser::make_LID(std::string(yytext), LOC); }
 [A-Z][a-zA-Z]* { return yy::parser::make_UID(std::string(yytext), LOC); }

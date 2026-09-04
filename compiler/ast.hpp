@@ -232,6 +232,34 @@ public:
   void print(int indent, std::ostream &to) const override;
 };
 
+/* `value |> function` hands the value on the left to the function on the
+ * right, building the same application as writing them the other way round
+ * would. It stays a node of its own so that a mistake in a pipeline can be
+ * reported in terms of the pipeline the program actually wrote. */
+class AstPipe : public Ast {
+public:
+  std::unique_ptr<Ast> value;
+  std::unique_ptr<Ast> function;
+
+  AstPipe(std::unique_ptr<Ast> v, std::unique_ptr<Ast> f,
+          yy::location lc = yy::location())
+      : Ast(std::move(lc)), value(std::move(v)), function(std::move(f)) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
+
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
+
+  void translate(GlobalScope &scope) override;
+
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void print(int indent, std::ostream &to) const override;
+};
+
 class AstCase : public Ast {
 public:
   std::unique_ptr<Ast> of;

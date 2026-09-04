@@ -14,6 +14,7 @@ The Quail toolchain includes `qc`, an Ahead-of-Time (AOT) compiler written in C+
 * **Parametric Polymorphism:** Full support for polymorphic functions and polymorphic data types (e.g., generics).
 * **Pattern Matching:** Expressive `match ... with` syntax for destructing Algebraic Data Types (ADTs).
 * **Built-in Lists:** A primitive `List` type with bracket syntax (`[1, 2, 3]`) for literals.
+* **Pipelines:** A `|>` operator that reads a chain of calls front to back.
 * **AOT Compilation:** Compiles directly to native machine code via LLVM, avoiding interpreter overhead.
 * **Memory Management:** Automatic garbage collection handles the allocation and cleanup of the G-Machine graph.
 
@@ -100,6 +101,27 @@ braced body. They may capture variables from the enclosing scope:
 fun sum l = { foldr (\x acc -> { x + acc }) 0 l }
 
 fun addToAll n l = { map (\x -> { n + x }) l }
+```
+
+### Pipelines
+
+`|>` passes the value on its left to the function on its right, so `x |> f`
+means `f x`. It binds looser than everything else and associates to the left,
+which lets a chain of calls be read in the order it happens:
+
+```quail
+fun sum l = { foldr (\x acc -> { x + acc }) 0 l }
+
+fun main = { [1, 2, 3, 4] |> map (\x -> { x * 2 }) |> sum }
+```
+
+The right side may be any expression that evaluates to a function, including
+a partial application, so the piped value fills the last argument:
+
+```quail
+fun add x y = { x + y }
+
+fun main = { [1, 2, 3, 4] |> foldr add 0 }
 ```
 
 ### Let/In

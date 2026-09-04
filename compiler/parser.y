@@ -33,6 +33,7 @@ using yyscan_t = void*;
 %token CBRACKET
 %token COMMA
 %token ARROW
+%token PIPE
 %token EQUAL
 %token LET
 %token IN
@@ -50,7 +51,7 @@ using yyscan_t = void*;
 %type <std::vector<std::unique_ptr<Ast>>> listItems
 %type <std::vector<std::unique_ptr<Branch>>> branches
 %type <std::vector<std::unique_ptr<Constructor>>> constructors
-%type <std::unique_ptr<Ast>> aAdd aMul case lambda let list app appBase
+%type <std::unique_ptr<Ast>> expr aAdd aMul case lambda let list app appBase
 %type <std::unique_ptr<DefinitionData>> data
 %type <std::unique_ptr<DefinitionDefn>> defn
 %type <std::unique_ptr<DefinitionGroup>> letDefinitions
@@ -79,7 +80,7 @@ definition
     ;
 
 defn
-    : DEFN LID lowercaseParams EQUAL OCURLY aAdd CCURLY
+    : DEFN LID lowercaseParams EQUAL OCURLY expr CCURLY
         { $$ = std::unique_ptr<DefinitionDefn>(
             new DefinitionDefn(std::move($2), std::move($3), std::move($6), @$)); }
     ;
@@ -92,6 +93,11 @@ lowercaseParams
 uppercaseParams
     : %empty { $$ = std::vector<std::string>(); }
     | uppercaseParams UID { $$ = std::move($1); $$.push_back(std::move($2)); }
+    ;
+
+expr
+    : expr PIPE aAdd { $$ = std::unique_ptr<Ast>(new AstPipe(std::move($1), std::move($3), @$)); }
+    | aAdd { $$ = std::move($1); }
     ;
 
 aAdd
@@ -115,7 +121,7 @@ appBase
     : INT { $$ = std::unique_ptr<Ast>(new AstInt($1, @$)); }
     | LID { $$ = std::unique_ptr<Ast>(new AstLid(std::move($1), @$)); }
     | UID { $$ = std::unique_ptr<Ast>(new AstUid(std::move($1), @$)); }
-    | OPAREN aAdd CPAREN { $$ = std::move($2); }
+    | OPAREN expr CPAREN { $$ = std::move($2); }
     | case { $$ = std::move($1); }
     | lambda { $$ = std::move($1); }
     | let { $$ = std::move($1); }
@@ -130,23 +136,23 @@ list
     ;
 
 listItems
-    : listItems COMMA aAdd { $$ = std::move($1); $$.push_back(std::move($3)); }
-    | aAdd
+    : listItems COMMA expr { $$ = std::move($1); $$.push_back(std::move($3)); }
+    | expr
         { $$ = std::vector<std::unique_ptr<Ast>>(); $$.push_back(std::move($1)); }
     ;
 
 case
-    : CASE aAdd OF OCURLY branches CCURLY 
+    : CASE expr OF OCURLY branches CCURLY 
         { $$ = std::unique_ptr<Ast>(new AstCase(std::move($2), std::move($5), @$)); }
     ;
 
 lambda
-    : LAMBDA lowercaseParams ARROW OCURLY aAdd CCURLY
+    : LAMBDA lowercaseParams ARROW OCURLY expr CCURLY
         { $$ = std::unique_ptr<Ast>(new AstLambda(std::move($2), std::move($5), @$)); }
     ;
 
 let
-    : LET OCURLY letDefinitions CCURLY IN OCURLY aAdd CCURLY
+    : LET OCURLY letDefinitions CCURLY IN OCURLY expr CCURLY
         { $$ = std::unique_ptr<Ast>(new AstLet(std::move($3), std::move($7), @$)); }
     ;
 
@@ -164,7 +170,7 @@ branches
     ;
 
 branch
-    : pattern ARROW OCURLY aAdd CCURLY
+    : pattern ARROW OCURLY expr CCURLY
         { $$ = std::unique_ptr<Branch>(new Branch(std::move($1), std::move($4))); }
     ;
 

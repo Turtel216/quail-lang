@@ -36,3 +36,6 @@
 /bebug
 compile_commands.json
 .cache
+
+# File used for testing
+example.ql
