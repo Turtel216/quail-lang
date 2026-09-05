@@ -19,6 +19,15 @@ inline constexpr const char *listConsName = "Cons";
 inline constexpr int listNilTag = 0;
 inline constexpr int listConsTag = 1;
 
+/* The type an if condition must have. Unlike the list, Bool is an ordinary
+ * data type declared by the prelude, so `if` looks these names up instead of
+ * assuming they are there. TODO: this might be stupid and needs to be updated
+ * and work similar to list
+ */
+inline constexpr const char *boolTypeName = "Bool";
+inline constexpr const char *boolTrueName = "True";
+inline constexpr const char *boolFalseName = "False";
+
 class TypeManager;
 
 class Type {

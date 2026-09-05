@@ -37,6 +37,8 @@ using yyscan_t = void*;
 %token EQUAL
 %token LET
 %token IN
+%token IF
+%token ELSE
 %token LAMBDA
 %token <std::string> LID
 %token <std::string> UID
@@ -47,11 +49,17 @@ using yyscan_t = void*;
 %define api.token.constructor
 %define parse.error verbose
 
+/* An if that never got its else is caught by a rule of its own so the
+ * mistake can be named. Shifting wins over that rule, which is what makes an
+ * else belong to the nearest if. */
+%precedence NO_ELSE
+%precedence ELSE
+
 %type <std::vector<std::string>> lowercaseParams uppercaseParams
 %type <std::vector<std::unique_ptr<Ast>>> listItems
 %type <std::vector<std::unique_ptr<Branch>>> branches
 %type <std::vector<std::unique_ptr<Constructor>>> constructors
-%type <std::unique_ptr<Ast>> expr aAdd aMul case lambda let list app appBase
+%type <std::unique_ptr<Ast>> expr aAdd aMul case conditional lambda let list app appBase
 %type <std::unique_ptr<DefinitionData>> data
 %type <std::unique_ptr<DefinitionDefn>> defn
 %type <std::unique_ptr<DefinitionGroup>> letDefinitions
@@ -123,6 +131,7 @@ appBase
     | UID { $$ = std::unique_ptr<Ast>(new AstUid(std::move($1), @$)); }
     | OPAREN expr CPAREN { $$ = std::move($2); }
     | case { $$ = std::move($1); }
+    | conditional { $$ = std::move($1); }
     | lambda { $$ = std::move($1); }
     | let { $$ = std::move($1); }
     | list { $$ = std::move($1); }
@@ -144,6 +153,15 @@ listItems
 case
     : CASE expr OF OCURLY branches CCURLY 
         { $$ = std::unique_ptr<Ast>(new AstCase(std::move($2), std::move($5), @$)); }
+    ;
+
+conditional
+    : IF expr OCURLY expr CCURLY ELSE OCURLY expr CCURLY
+        { $$ = std::unique_ptr<Ast>(
+            new AstIf(std::move($2), std::move($4), std::move($8), @$)); }
+    | IF expr OCURLY expr CCURLY %prec NO_ELSE
+        { drv.reportError(@$, "an if expression must have an else branch");
+          YYABORT; }
     ;
 
 lambda

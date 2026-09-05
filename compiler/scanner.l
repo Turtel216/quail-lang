@@ -32,6 +32,8 @@ match { return yy::parser::make_CASE(LOC); }
 with { return yy::parser::make_OF(LOC); }
 let { return yy::parser::make_LET(LOC); }
 in { return yy::parser::make_IN(LOC); }
+if { return yy::parser::make_IF(LOC); }
+else { return yy::parser::make_ELSE(LOC); }
 \\ { return yy::parser::make_LAMBDA(LOC); }
 \{ { return yy::parser::make_OCURLY(LOC); }
 \} { return yy::parser::make_CCURLY(LOC); }

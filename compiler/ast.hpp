@@ -287,6 +287,39 @@ public:
   void print(int indent, std::ostream &to) const override;
 };
 
+/* `if cond { ... } else { ... }`. It is a case analysis of the two Bool
+ * constructors written without naming them, and compiles to the same jump. */
+class AstIf : public Ast {
+public:
+  std::unique_ptr<Ast> condition;
+  std::unique_ptr<Ast> thenBranch;
+  std::unique_ptr<Ast> elseBranch;
+
+  /* The tags the two branches answer to, read off the Bool type once
+   * typechecking has found it. */
+  int trueTag = 0;
+  int falseTag = 0;
+
+  AstIf(std::unique_ptr<Ast> c, std::unique_ptr<Ast> t, std::unique_ptr<Ast> e,
+        yy::location lc = yy::location())
+      : Ast(std::move(lc)), condition(std::move(c)), thenBranch(std::move(t)),
+        elseBranch(std::move(e)) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
+
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
+
+  void translate(GlobalScope &scope) override;
+
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void print(int indent, std::ostream &to) const override;
+};
+
 class PatternVar : public Pattern {
 public:
   std::string var;

@@ -325,9 +325,9 @@ void AstPipe::generate(
   /* The argument goes down first, exactly as for a written-out application;
    * only the two sides trade places. */
   this->value->generate(env, into);
-  this->function->generate(std::shared_ptr<ff::ir::Enviroment>(
-                               new ff::ir::EnviromentOffset(1, env)),
-                           into);
+  this->function->generate(
+      std::shared_ptr<ff::ir::Enviroment>(new ff::ir::EnviromentOffset(1, env)),
+      into);
 
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
 }
@@ -460,6 +460,108 @@ void AstCase::print(int indent, std::ostream &to) const {
     to << std::endl;
     branch->expr->print(indent + 2, to);
   }
+}
+
+std::shared_ptr<ff::sem::Type> AstIf::typecheck(ff::sem::TypeManager &mgr) {
+  auto boolType = typeContext->lookupType(ff::sem::boolTypeName);
+  auto *boolData = dynamic_cast<ff::sem::TypeData *>(boolType.get());
+
+  if (!boolData)
+    throw ff::TypeError(std::string("an if expression needs the ") +
+                            ff::sem::boolTypeName +
+                            " data type, which is not defined",
+                        loc);
+
+  auto trueIt = boolData->constructors.find(ff::sem::boolTrueName);
+  auto falseIt = boolData->constructors.find(ff::sem::boolFalseName);
+  if (trueIt == boolData->constructors.end() ||
+      falseIt == boolData->constructors.end())
+    throw ff::TypeError(std::string("an if expression needs the ") +
+                            ff::sem::boolTypeName + " type to have the " +
+                            ff::sem::boolTrueName + " and " +
+                            ff::sem::boolFalseName + " constructors",
+                        loc);
+
+  this->trueTag = trueIt->second.tag;
+  this->falseTag = falseIt->second.tag;
+
+  auto conditionType = condition->typecheck(mgr);
+
+  /* A condition already known to be something else is worth reporting rigth
+   * away */
+  ff::sem::TypeVar *var;
+  auto resolved = mgr.resolve(conditionType, var);
+  auto *resolvedApp = dynamic_cast<ff::sem::TypeApp *>(resolved.get());
+  if (!var && (!resolvedApp || resolvedApp->constructor.get() != boolData)) {
+    std::ostringstream errorStream;
+    errorStream << "the condition of an if expression is not a "
+                << ff::sem::boolTypeName << ", its type is ";
+    resolved->print(mgr, errorStream);
+
+    throw ff::TypeError(errorStream.str(), condition->loc);
+  }
+
+  mgr.unify(std::shared_ptr<ff::sem::Type>(new ff::sem::TypeApp(boolType)),
+            conditionType, condition->loc);
+
+  auto thenType = thenBranch->typecheck(mgr);
+  auto elseType = elseBranch->typecheck(mgr);
+  mgr.unify(thenType, elseType, elseBranch->loc);
+
+  return thenType;
+}
+
+void AstIf::findFree(ff::sem::TypeManager &mgr,
+                     std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                     std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+  condition->findFree(mgr, typeCtx, into);
+  thenBranch->findFree(mgr, typeCtx, into);
+  elseBranch->findFree(mgr, typeCtx, into);
+}
+
+void AstIf::translate(GlobalScope &scope) {
+  condition->translate(scope);
+  thenBranch->translate(scope);
+  elseBranch->translate(scope);
+}
+
+void AstIf::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  condition->generate(env, into);
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
+
+  ff::ir::Jump *jumpInstruction = new ff::ir::Jump();
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(jumpInstruction));
+
+  const std::pair<int, const Ast *> arms[] = {{trueTag, thenBranch.get()},
+                                              {falseTag, elseBranch.get()}};
+
+  for (auto &[tag, arm] : arms) {
+    std::vector<std::unique_ptr<ff::ir::Instruction>> branchInstructions;
+
+    /* Neither branch binds anything, so the split only drops the condition
+     * and leaves the branch result alone on the stack. */
+    branchInstructions.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Split(0)));
+    arm->generate(env, branchInstructions);
+
+    jumpInstruction->tagMappings[tag] = jumpInstruction->branches.size();
+    jumpInstruction->branches.push_back(std::move(branchInstructions));
+  }
+}
+
+void AstIf::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "IF:" << std::endl;
+  condition->print(indent + 1, to);
+  printIndent(indent, to);
+  to << "THEN:" << std::endl;
+  thenBranch->print(indent + 1, to);
+  printIndent(indent, to);
+  to << "ELSE:" << std::endl;
+  elseBranch->print(indent + 1, to);
 }
 
 std::shared_ptr<ff::sem::Type> AstLambda::typecheck(ff::sem::TypeManager &mgr) {

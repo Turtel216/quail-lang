@@ -13,6 +13,7 @@ The Quail toolchain includes `qc`, an Ahead-of-Time (AOT) compiler written in C+
 * **Strong Static Typing:** A Hindley-Milner type system ensures type safety at compile time without the need for verbose type annotations.
 * **Parametric Polymorphism:** Full support for polymorphic functions and polymorphic data types (e.g., generics).
 * **Pattern Matching:** Expressive `match ... with` syntax for destructing Algebraic Data Types (ADTs).
+* **Conditionals:** An `if ... else` expression that branches on a `Bool`.
 * **Built-in Lists:** A primitive `List` type with bracket syntax (`[1, 2, 3]`) for literals.
 * **Pipelines:** A `|>` operator that reads a chain of calls front to back.
 * **AOT Compilation:** Compiles directly to native machine code via LLVM, avoiding interpreter overhead.
@@ -63,6 +64,32 @@ fun add x y = {
     x + y
 }
 
+```
+
+### Conditionals
+
+`if` branches on a `Bool` and hands back the value of the branch it took, so
+both branches must have the same type. The `else` is not optional: an if is an
+expression, and there is nothing for it to stand for when the condition is
+false. Only the branch that is taken is ever evaluated:
+
+```quail
+fun abs x = {
+    if isNegative x {
+        0 - x
+    } else {
+        x
+    }
+}
+```
+
+Being an expression, it may stand wherever one may, including inside another
+one. An `else` belongs to the nearest `if`:
+
+```quail
+fun classify b c = {
+    [if b { 1 } else { if c { 2 } else { 3 } }]
+}
 ```
 
 ### Lists

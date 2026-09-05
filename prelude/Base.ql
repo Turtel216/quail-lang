@@ -12,13 +12,6 @@ fun not b = {
     }
 }
 
-fun if c t e = {
-    match c with {
-          True -> { t }
-          False -> { e }
-    }
-}
-
 fun map f l = {
     match l with {
         Nil -> { Nil }

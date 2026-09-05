@@ -1,7 +1,0 @@
-
-fun add x y = { x + y }
-fun double x = { x * 2 }
-
-fun sum l = { foldr add 0 l }
-
-fun main = { [1, 2, 3, 4] |> map double |> sum |> add 22 }
