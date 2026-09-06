@@ -1,4 +1,6 @@
 #include "instructions.hpp"
+#include <cassert>
+#include <llvm/IR/InstrTypes.h>
 #include <ostream>
 
 namespace ff {
@@ -144,7 +146,7 @@ void Binop::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
   auto leftInt = generator.unwrapNum(generator.createPop(f));
   auto rightInt = generator.unwrapNum(generator.createPop(f));
 
-  llvm::Value *result;
+  llvm::Value *result = nullptr;
   switch (op) {
   case PLUS:
     result = generator.getBuilder().CreateAdd(leftInt, rightInt);
@@ -158,6 +160,9 @@ void Binop::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
   case DIVIDE:
     result = generator.getBuilder().CreateSDiv(leftInt, rightInt);
     break;
+  default:
+    assert(false && "arithmetic expected");
+    break;
   }
 
   generator.createPush(f, generator.createNum(f, result));
@@ -166,6 +171,49 @@ void Binop::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
 void Binop::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
   to << "BinOp(" << opAction(op) << ")" << std::endl;
+}
+
+void Compare::generate(cg::CodeGenerator &generator, llvm::Function *f) const {
+  auto leftInt = generator.unwrapNum(generator.createPop(f));
+  auto rightInt = generator.unwrapNum(generator.createPop(f));
+
+  llvm::CmpInst::Predicate predicate = llvm::CmpInst::ICMP_EQ;
+  switch (op) {
+  case EQUALS:
+    predicate = llvm::CmpInst::ICMP_EQ;
+    break;
+  case NOTEQUALS:
+    predicate = llvm::CmpInst::ICMP_NE;
+    break;
+  case LESS:
+    predicate = llvm::CmpInst::ICMP_SLT;
+    break;
+  case LESSEQUALS:
+    predicate = llvm::CmpInst::ICMP_SLE;
+    break;
+  case GREATER:
+    predicate = llvm::CmpInst::ICMP_SGT;
+    break;
+  case GREATEREQUALS:
+    predicate = llvm::CmpInst::ICMP_SGE;
+    break;
+  default:
+    assert(false && "comparison expected");
+    break;
+  }
+
+  auto result = generator.getBuilder().CreateICmp(predicate, leftInt, rightInt);
+
+  /* Both answers are nullary constructors, so the only thing that differs is
+   * the tag the packed node carries. */
+  auto tag = generator.getBuilder().CreateSelect(
+      result, generator.createI8(trueTag), generator.createI8(falseTag));
+  generator.createPack(f, generator.createSize(0), tag);
+}
+
+void Compare::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "Compare(" << opAction(op) << ")" << std::endl;
 }
 
 void Eval::generate(cg::CodeGenerator &generator, llvm::Function *f) const {

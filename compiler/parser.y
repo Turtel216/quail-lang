@@ -35,6 +35,12 @@ using yyscan_t = void*;
 %token ARROW
 %token PIPE
 %token EQUAL
+%token EQUALEQUAL
+%token NOTEQUAL
+%token LESSTHAN
+%token LESSEQUAL
+%token GREATERTHAN
+%token GREATEREQUAL
 %token LET
 %token IN
 %token IF
@@ -59,7 +65,8 @@ using yyscan_t = void*;
 %type <std::vector<std::unique_ptr<Ast>>> listItems
 %type <std::vector<std::unique_ptr<Branch>>> branches
 %type <std::vector<std::unique_ptr<Constructor>>> constructors
-%type <std::unique_ptr<Ast>> expr aAdd aMul case conditional lambda let list app appBase
+%type <std::unique_ptr<Ast>> expr comparison aAdd aMul case conditional lambda let list app appBase
+%type <binop> comparisonOp
 %type <std::unique_ptr<DefinitionData>> data
 %type <std::unique_ptr<DefinitionDefn>> defn
 %type <std::unique_ptr<DefinitionGroup>> letDefinitions
@@ -104,8 +111,29 @@ uppercaseParams
     ;
 
 expr
-    : expr PIPE aAdd { $$ = std::unique_ptr<Ast>(new AstPipe(std::move($1), std::move($3), @$)); }
+    : expr PIPE comparison { $$ = std::unique_ptr<Ast>(new AstPipe(std::move($1), std::move($3), @$)); }
+    | comparison { $$ = std::move($1); }
+    ;
+
+/* A comparison takes two arithmetic expressions and answers with a Bool, so
+ * a second one has nothing left to compare. Spelling that case out lets the
+ * mistake be named instead of coming back as a bare syntax error. */
+comparison
+    : aAdd comparisonOp aAdd
+        { $$ = std::unique_ptr<Ast>(new AstBinop($2, std::move($1), std::move($3), @$)); }
+    | aAdd comparisonOp aAdd comparisonOp
+        { drv.reportError(@$, "comparison operators do not chain");
+          YYABORT; }
     | aAdd { $$ = std::move($1); }
+    ;
+
+comparisonOp
+    : EQUALEQUAL { $$ = EQUALS; }
+    | NOTEQUAL { $$ = NOTEQUALS; }
+    | LESSTHAN { $$ = LESS; }
+    | LESSEQUAL { $$ = LESSEQUALS; }
+    | GREATERTHAN { $$ = GREATER; }
+    | GREATEREQUAL { $$ = GREATEREQUALS; }
     ;
 
 aAdd

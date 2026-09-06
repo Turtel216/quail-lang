@@ -6,8 +6,14 @@
 namespace ff {
 namespace drv {
 
+/* The first complaint is the one worth keeping: a stray character the
+ * scanner names precisely is more useful than the syntax error the parser
+ * trips over a token later. */
 void ParseDriver::reportError(const yy::location &loc,
                               const std::string &message) {
+  if (errorMessage)
+    return;
+
   errorMessage = message;
   errorLocation = loc;
 }

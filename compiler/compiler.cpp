@@ -29,6 +29,11 @@ static const char *const runtimeSources[] = {
  * so that anything it declares can be redefined. */
 static const char *const preludePath = "prelude/Base.ql";
 
+/* The operators that answer with a Bool rather than an Int. They are set up
+ * apart from the arithmetic ones because Bool comes from the prelude. */
+static constexpr binop comparisonOps[] = {EQUALS,  NOTEQUALS, LESS,
+                                          GREATER, LESSEQUALS, GREATEREQUALS};
+
 namespace ff {
 namespace drv {
 
@@ -96,6 +101,41 @@ void Compiler::addDefaultFunctionTypes() {
     addBinopType(op, closedIntOpType);
 }
 
+/* The comparisons hand back a Bool, which the prelude declares like any
+ * other data type, so their types cannot be built until it has been read. */
+void Compiler::addComparisonFunctionTypes() {
+  std::shared_ptr<sem::Type> intType = globalContext->lookupType("Int");
+  assert(intType != nullptr);
+
+  std::shared_ptr<sem::Type> boolType =
+      globalContext->lookupType(sem::boolTypeName);
+  auto *boolData = dynamic_cast<sem::TypeData *>(boolType.get());
+  if (!boolData)
+    throw TypeError(std::string("a comparison needs the ") + sem::boolTypeName +
+                    " data type, which is not defined");
+
+  auto trueIt = boolData->constructors.find(sem::boolTrueName);
+  auto falseIt = boolData->constructors.find(sem::boolFalseName);
+  if (trueIt == boolData->constructors.end() ||
+      falseIt == boolData->constructors.end())
+    throw TypeError(std::string("a comparison needs the ") + sem::boolTypeName +
+                    " type to have the " + sem::boolTrueName + " and " +
+                    sem::boolFalseName + " constructors");
+
+  boolTrueTag = trueIt->second.tag;
+  boolFalseTag = falseIt->second.tag;
+
+  std::shared_ptr<sem::Type> intTypeApp(new sem::TypeApp(std::move(intType)));
+  std::shared_ptr<sem::Type> boolTypeApp(new sem::TypeApp(std::move(boolType)));
+
+  std::shared_ptr<sem::Type> comparisonType(new sem::TypeArr(
+      intTypeApp,
+      std::shared_ptr<sem::Type>(new sem::TypeArr(intTypeApp, boolTypeApp))));
+
+  for (auto &op : comparisonOps)
+    addBinopType(op, comparisonType);
+}
+
 void Compiler::parseFile(const std::string &path) {
   ParseDriver driver(fileManager, globalDefs, path);
   if (!driver())
@@ -111,6 +151,10 @@ void Compiler::typecheck() {
   std::set<std::string> freeVariables;
   globalDefs.findFree(manager, globalContext, ff::sem::Visibility::Global,
                       freeVariables);
+
+  /* Bool is only in scope once the prelude has been walked, which findFree
+   * has just done. */
+  addComparisonFunctionTypes();
 
   /* Nothing encloses the top level, so anything still free here that is not
    * already bound -- a constructor, an operator -- has no definition. */
@@ -152,7 +196,10 @@ Compiler::Compiler(const std::string &input, const std::string &output)
   addDefaultFunctionTypes();
 }
 
-void Compiler::createLLVMBinop(binop op) {
+/* The supercombinator behind a binary operator: force both arguments, run
+ * `operation` on them, and update the redex with what it left behind. */
+void Compiler::createLLVMOperator(
+    binop op, std::unique_ptr<ff::ir::Instruction> operation) {
   auto newFunction = generator.createCustomFunction(
       globalContext->getMangledName(opName(op)), 2);
 
@@ -165,8 +212,7 @@ void Compiler::createLLVMBinop(binop op) {
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Push(1)));
   instructions.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
-  instructions.push_back(
-      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Binop(op)));
+  instructions.push_back(std::move(operation));
   instructions.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(2)));
   instructions.push_back(
@@ -180,6 +226,17 @@ void Compiler::createLLVMBinop(binop op) {
   generator.getBuilder().CreateRetVoid();
 }
 
+void Compiler::createLLVMBinop(binop op) {
+  createLLVMOperator(
+      op, std::unique_ptr<ff::ir::Instruction>(new ff::ir::Binop(op)));
+}
+
+void Compiler::createLLVMComparison(binop op) {
+  createLLVMOperator(op, std::unique_ptr<ff::ir::Instruction>(
+                             new ff::ir::Compare(op, boolTrueTag,
+                                                 boolFalseTag)));
+}
+
 void Compiler::createLLVMListConstructors() {
   generateConstructorLLVM(generator, sem::listNilName, sem::listNilTag, 0);
   generateConstructorLLVM(generator, sem::listConsName, sem::listConsTag, 2);
@@ -190,6 +247,8 @@ void Compiler::generateLLVM() {
   createLLVMBinop(MINUS);
   createLLVMBinop(TIMES);
   createLLVMBinop(DIVIDE);
+  for (auto &op : comparisonOps)
+    createLLVMComparison(op);
   createLLVMListConstructors();
 
   for (auto &defData : globalDefs.defsData) {

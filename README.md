@@ -14,6 +14,7 @@ The Quail toolchain includes `qc`, an Ahead-of-Time (AOT) compiler written in C+
 * **Parametric Polymorphism:** Full support for polymorphic functions and polymorphic data types (e.g., generics).
 * **Pattern Matching:** Expressive `match ... with` syntax for destructing Algebraic Data Types (ADTs).
 * **Conditionals:** An `if ... else` expression that branches on a `Bool`.
+* **Comparisons:** The operators `==`, `!=`, `>`, `<`, `>=` and `<=` weigh two `Int`s against each other and answer with a `Bool`.
 * **Built-in Lists:** A primitive `List` type with bracket syntax (`[1, 2, 3]`) for literals.
 * **Pipelines:** A `|>` operator that reads a chain of calls front to back.
 * **AOT Compilation:** Compiles directly to native machine code via LLVM, avoiding interpreter overhead.
@@ -66,6 +67,41 @@ fun add x y = {
 
 ```
 
+### Comparisons
+
+Two `Int`s are weighed against each other with `==`, `!=`, `>`, `<`, `>=` or
+`<=`. The answer is an ordinary `Bool`, so it may be branched on, matched on,
+or passed around like any other value:
+
+```quail
+fun isPositive n = { n > 0 }
+
+fun sign n = {
+    match n == 0 with {
+        True -> { 0 }
+        False -> { if n > 0 { 1 } else { 0 - 1 } }
+    }
+}
+```
+
+A comparison binds looser than arithmetic, so both sides are worked out
+before they are weighed: `1 + 2 == 3` compares `3` with `3`. Only `|>` binds
+looser still.
+
+Comparisons do not chain. `a < b < c` would ask a `Bool` to stand where an
+`Int` belongs, so it is rejected outright rather than left to the type
+checker. Two of them are joined by branching on the first:
+
+```quail
+fun between low x high = {
+    if low < x {
+        x < high
+    } else {
+        False
+    }
+}
+```
+
 ### Conditionals
 
 `if` branches on a `Bool` and hands back the value of the branch it took, so
@@ -75,7 +111,7 @@ false. Only the branch that is taken is ever evaluated:
 
 ```quail
 fun abs x = {
-    if isNegative x {
+    if x < 0 {
         0 - x
     } else {
         x

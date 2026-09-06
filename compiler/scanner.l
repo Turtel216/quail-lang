@@ -44,7 +44,15 @@ else { return yy::parser::make_ELSE(LOC); }
 ,  { return yy::parser::make_COMMA(LOC); }
 -> { return yy::parser::make_ARROW(LOC); }
 \|> { return yy::parser::make_PIPE(LOC); }
+== { return yy::parser::make_EQUALEQUAL(LOC); }
+!= { return yy::parser::make_NOTEQUAL(LOC); }
+\<= { return yy::parser::make_LESSEQUAL(LOC); }
+>= { return yy::parser::make_GREATEREQUAL(LOC); }
+\< { return yy::parser::make_LESSTHAN(LOC); }
+> { return yy::parser::make_GREATERTHAN(LOC); }
 = { return yy::parser::make_EQUAL(LOC); }
+! { drv.reportError(LOC, "a lone ! is not an operator, did you mean !=?");
+    return yy::parser::make_YYEOF(LOC); }
 [a-z][a-zA-Z]* { return yy::parser::make_LID(std::string(yytext), LOC); }
 [A-Z][a-zA-Z]* { return yy::parser::make_UID(std::string(yytext), LOC); }
 <<EOF>> { return yy::parser::make_YYEOF(LOC); }

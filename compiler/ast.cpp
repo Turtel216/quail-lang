@@ -34,6 +34,35 @@ std::unique_ptr<Ast> partialApplication(const DefinitionDefn &definition) {
   return application;
 }
 
+/* Report an operand whose type is already known to be one the operator
+ * cannot take. Unification would notice it too, but only as two types that
+ * did not fit, without saying which side of the operator went wrong. */
+void checkOperand(ff::sem::TypeManager &mgr, const char *side, binop op,
+                  const std::shared_ptr<ff::sem::Type> &expected,
+                  const Ast &operand,
+                  const std::shared_ptr<ff::sem::Type> &actual) {
+  ff::sem::TypeVar *var;
+  auto resolved = mgr.resolve(actual, var);
+
+  /* A type still open here may yet turn out to fit. */
+  if (var)
+    return;
+
+  auto *expectedApp = dynamic_cast<ff::sem::TypeApp *>(expected.get());
+  auto *resolvedApp = dynamic_cast<ff::sem::TypeApp *>(resolved.get());
+  if (!expectedApp ||
+      (resolvedApp && resolvedApp->constructor == expectedApp->constructor))
+    return;
+
+  std::ostringstream errorStream;
+  errorStream << "the " << side << " operand of " << opName(op) << " is not ";
+  expectedApp->constructor->print(mgr, errorStream);
+  errorStream << ", its type is ";
+  resolved->print(mgr, errorStream);
+
+  throw ff::TypeError(errorStream.str(), operand.loc);
+}
+
 } // namespace
 
 // ############ Asts ############
@@ -195,6 +224,16 @@ std::shared_ptr<ff::sem::Type> AstBinop::typecheck(ff::sem::TypeManager &mgr) {
                         loc);
 
   auto ftype = opVariable->scheme->instantiate(mgr);
+
+  /* Every operator takes two operands of a type it fixes itself, so the
+   * types it expects can be read straight off it and blamed one at a time. */
+  if (auto *firstArrow = dynamic_cast<ff::sem::TypeArr *>(ftype.get())) {
+    checkOperand(mgr, "left", op, firstArrow->getLeft(), *left, ltype);
+    if (auto *secondArrow =
+            dynamic_cast<ff::sem::TypeArr *>(firstArrow->getRight().get()))
+      checkOperand(mgr, "right", op, secondArrow->getLeft(), *right, rtype);
+  }
+
   auto returnType = mgr.newType();
   auto arrowOne =
       std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(rtype, returnType));

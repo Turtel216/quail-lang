@@ -144,6 +144,23 @@ public:
   void print(int indent, std::ostream &to) const override;
 };
 
+/* Compare the two numbers on top of the stack and leave the Bool the
+ * comparison answers to in their place. The tags come from the Bool type
+ * the prelude declares, which is only known once it has been typechecked. */
+class Compare : public Instruction {
+private:
+  binop op;
+  int trueTag;
+  int falseTag;
+
+public:
+  Compare(binop _op, int _trueTag, int _falseTag) noexcept
+      : op(_op), trueTag(_trueTag), falseTag(_falseTag) {}
+
+  void generate(cg::CodeGenerator &, llvm::Function *) const override;
+  void print(int indent, std::ostream &to) const override;
+};
+
 class Eval : public Instruction {
 public:
   void generate(cg::CodeGenerator &, llvm::Function *) const override;
