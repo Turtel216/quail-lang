@@ -17,6 +17,7 @@ The Quail toolchain includes `qc`, an Ahead-of-Time (AOT) compiler written in C+
 * **Comparisons:** The operators `==`, `!=`, `>`, `<`, `>=` and `<=` weigh two `Int`s against each other and answer with a `Bool`.
 * **Built-in Lists:** A primitive `List` type with bracket syntax (`[1, 2, 3]`) for literals.
 * **Pipelines:** A `|>` operator that reads a chain of calls front to back.
+* **Composition:** A `.` operator that builds one function out of two, the way Haskell's does.
 * **AOT Compilation:** Compiles directly to native machine code via LLVM, avoiding interpreter overhead.
 * **Memory Management:** Automatic garbage collection handles the allocation and cleanup of the G-Machine graph.
 
@@ -185,6 +186,39 @@ a partial application, so the piped value fills the last argument:
 fun add x y = { x + y }
 
 fun main = { [1, 2, 3, 4] |> foldr add 0 }
+```
+
+### Composition
+
+`.` joins two functions into one. `f . g` is the function that hands its
+argument to `g` and `g`'s answer to `f`, so `(f . g) x` means `f (g x)`. The
+two must fit together: what the right side hands back is what the left side
+takes.
+
+```quail
+fun double x = { x * 2 }
+fun inc x = { x + 1 }
+
+fun main = { (double . inc) 20 }
+```
+
+It binds tighter than the arithmetic operators and looser than application,
+and associates to the right, so `f . g . h` is `f . (g . h)` and `f . g 1` is
+`f . (g 1)`. Either side may be any expression that evaluates to a function,
+including a partial application or a constructor:
+
+```quail
+fun add x y = { x + y }
+fun sum l = { foldr (\x acc -> { x + acc }) 0 l }
+
+fun main = { [1, 2, 3] |> sum . map (add 1) }
+```
+
+A composed function is an ordinary value: it may be handed around, applied
+later, or built out of functions whose types are not yet fixed.
+
+```quail
+fun twice f = { f . f }
 ```
 
 ### Let/In

@@ -63,6 +63,55 @@ void checkOperand(ff::sem::TypeManager &mgr, const char *side, binop op,
   throw ff::TypeError(errorStream.str(), operand.loc);
 }
 
+/* One side of a composition is resolved. A side already known not to be a
+ * function is worth naming outright; unifying it would only report a
+ * mismatch against an arrow the program never wrote. */
+std::shared_ptr<ff::sem::Type>
+resolveComposed(ff::sem::TypeManager &mgr, const char *side, const Ast &operand,
+                const std::shared_ptr<ff::sem::Type> &type) {
+  ff::sem::TypeVar *var;
+  auto resolved = mgr.resolve(type, var);
+
+  /* A type still open here may yet turn out to be a function. */
+  if (var || dynamic_cast<ff::sem::TypeArr *>(resolved.get()))
+    return resolved;
+
+  std::ostringstream errorStream;
+  errorStream << "the " << side << " side of . is not a function, its type is ";
+  resolved->print(mgr, errorStream);
+
+  throw ff::TypeError(errorStream.str(), operand.loc);
+}
+
+/* What the right side hands back must be what the left side takes. Both
+ * being known and different is the mistake worth reporting, rather than the
+ * two whole function types unification would hold against each other. */
+void checkComposedTypes(ff::sem::TypeManager &mgr, const Ast &compose,
+                        const std::shared_ptr<ff::sem::Type> &taken,
+                        const std::shared_ptr<ff::sem::Type> &handedBack) {
+  ff::sem::TypeVar *takenVar;
+  ff::sem::TypeVar *handedBackVar;
+  auto resolvedTaken = mgr.resolve(taken, takenVar);
+  auto resolvedHandedBack = mgr.resolve(handedBack, handedBackVar);
+  if (takenVar || handedBackVar)
+    return;
+
+  auto *takenApp = dynamic_cast<ff::sem::TypeApp *>(resolvedTaken.get());
+  auto *handedBackApp =
+      dynamic_cast<ff::sem::TypeApp *>(resolvedHandedBack.get());
+  if (!takenApp || !handedBackApp ||
+      takenApp->constructor == handedBackApp->constructor)
+    return;
+
+  std::ostringstream errorStream;
+  errorStream << "the left side of . takes ";
+  resolvedTaken->print(mgr, errorStream);
+  errorStream << ", but the right side of . hands back ";
+  resolvedHandedBack->print(mgr, errorStream);
+
+  throw ff::TypeError(errorStream.str(), compose.loc);
+}
+
 } // namespace
 
 // ############ Asts ############
@@ -376,6 +425,72 @@ void AstPipe::print(int indent, std::ostream &to) const {
   to << "PIPE:" << std::endl;
   value->print(indent + 1, to);
   function->print(indent + 1, to);
+}
+
+std::shared_ptr<ff::sem::Type>
+AstCompose::typecheck(ff::sem::TypeManager &mgr) {
+  auto leftType = left->typecheck(mgr);
+  auto rightType = right->typecheck(mgr);
+
+  auto resolvedLeft = resolveComposed(mgr, "left", *left, leftType);
+  auto resolvedRight = resolveComposed(mgr, "right", *right, rightType);
+
+  auto *leftArrow = dynamic_cast<ff::sem::TypeArr *>(resolvedLeft.get());
+  auto *rightArrow = dynamic_cast<ff::sem::TypeArr *>(resolvedRight.get());
+  if (leftArrow && rightArrow)
+    checkComposedTypes(mgr, *this, leftArrow->getLeft(),
+                       rightArrow->getRight());
+
+  auto composeVariable = typeContext->lookup(ff::sem::composeName);
+  /* The compiler binds the composition operator before anything is read. */
+  assert(composeVariable != nullptr);
+
+  auto composeType = composeVariable->scheme->instantiate(mgr);
+
+  auto returnType = mgr.newType();
+  auto arrowOne = std::shared_ptr<ff::sem::Type>(
+      new ff::sem::TypeArr(rightType, returnType));
+  auto arrowTwo =
+      std::shared_ptr<ff::sem::Type>(new ff::sem::TypeArr(leftType, arrowOne));
+
+  mgr.unify(composeType, arrowTwo, loc);
+  return returnType;
+}
+
+void AstCompose::findFree(ff::sem::TypeManager &mgr,
+                          std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                          std::set<std::string> &into) {
+  this->typeContext = typeCtx;
+  left->findFree(mgr, typeCtx, into);
+  right->findFree(mgr, typeCtx, into);
+}
+
+void AstCompose::translate(GlobalScope &scope) {
+  left->translate(scope);
+  right->translate(scope);
+}
+
+void AstCompose::generate(
+    const std::shared_ptr<ff::ir::Enviroment> &env,
+    std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  /* The same graph an application of the composition supercombinator to
+   * both sides would build. */
+  this->right->generate(env, into);
+  this->left->generate(
+      std::shared_ptr<ff::ir::Enviroment>(new ff::ir::EnviromentOffset(1, env)),
+      into);
+
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::PushGlobal(
+      this->typeContext->getMangledName(ff::sem::composeName))));
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
+}
+
+void AstCompose::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "COMPOSE:" << std::endl;
+  left->print(indent + 1, to);
+  right->print(indent + 1, to);
 }
 
 void AstCase::findFree(ff::sem::TypeManager &mgr,

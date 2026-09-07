@@ -28,6 +28,12 @@ inline constexpr const char *boolTypeName = "Bool";
 inline constexpr const char *boolTrueName = "True";
 inline constexpr const char *boolFalseName = "False";
 
+/* Function composition is built so that `f . g` always has
+ * a supercombinator to build. The name is the operator itself, which no
+ * program can bind, and the action is what its symbol is spelled out as. */
+inline constexpr const char *composeName = ".";
+inline constexpr const char *composeAction = "compose";
+
 class TypeManager;
 
 class Type {

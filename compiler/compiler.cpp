@@ -99,6 +99,38 @@ void Compiler::addDefaultFunctionTypes() {
   constexpr binop closedOps[] = {PLUS, MINUS, TIMES, DIVIDE};
   for (auto &op : closedOps)
     addBinopType(op, closedIntOpType);
+
+  addComposeType();
+}
+
+/* Composition works on any two functions that fit together, so its type is
+ * forall a b c. (b -> c) -> (a -> b) -> a -> c. Nothing about it depends on
+ * the prelude, unlike the comparisons. */
+void Compiler::addComposeType() {
+  constexpr const char *argumentVar = "a";
+  constexpr const char *middleVar = "b";
+  constexpr const char *resultVar = "c";
+
+  std::shared_ptr<sem::Type> argument(new sem::TypeVar(argumentVar));
+  std::shared_ptr<sem::Type> middle(new sem::TypeVar(middleVar));
+  std::shared_ptr<sem::Type> result(new sem::TypeVar(resultVar));
+
+  std::shared_ptr<sem::Type> outer(new sem::TypeArr(middle, result));
+  std::shared_ptr<sem::Type> inner(new sem::TypeArr(argument, middle));
+  std::shared_ptr<sem::Type> composed(new sem::TypeArr(argument, result));
+
+  std::shared_ptr<sem::Type> composeType(new sem::TypeArr(
+      std::move(outer), std::shared_ptr<sem::Type>(new sem::TypeArr(
+                            std::move(inner), std::move(composed)))));
+
+  std::shared_ptr<sem::TypeScheme> scheme(
+      new sem::TypeScheme(std::move(composeType)));
+  scheme->forall = {argumentVar, middleVar, resultVar};
+
+  globalContext->bind(sem::composeName, std::move(scheme),
+                      sem::Visibility::Global);
+  globalContext->setMangledName(sem::composeName,
+                                mangler.newMangledName(sem::composeAction));
 }
 
 /* The comparisons hand back a Bool, which the prelude declares like any
@@ -218,9 +250,17 @@ void Compiler::createLLVMOperator(
   instructions.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(2)));
 
-  generator.getBuilder().SetInsertPoint(&newFunction->getEntryBlock());
+  emitBuiltin(newFunction, instructions);
+}
+
+/* Fill in the body of a function the compiler wrote itself, the way a
+ * definition of its own would have been filled in. */
+void Compiler::emitBuiltin(
+    llvm::Function *function,
+    const std::vector<std::unique_ptr<ff::ir::Instruction>> &instructions) {
+  generator.getBuilder().SetInsertPoint(&function->getEntryBlock());
   for (auto &instruction : instructions) {
-    instruction->generate(generator, newFunction);
+    instruction->generate(generator, function);
   }
 
   generator.getBuilder().CreateRetVoid();
@@ -237,6 +277,35 @@ void Compiler::createLLVMComparison(binop op) {
                                                  boolFalseTag)));
 }
 
+/* The supercombinator behind the composition operator, which is what a
+ * `fun compose f g x = { f (g x) }` would have compiled to: build the
+ * application graph and leave it in place of the redex. */
+void Compiler::createLLVMCompose() {
+  constexpr std::size_t arity = 3;
+  auto newFunction = generator.createCustomFunction(
+      globalContext->getMangledName(sem::composeName), arity);
+
+  std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+  // g x, with the argument pushed before the function it is handed to.
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Push(2)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Push(2)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
+  // f applied to what it built.
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Push(1)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(arity)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(arity)));
+
+  emitBuiltin(newFunction, instructions);
+}
+
 void Compiler::createLLVMListConstructors() {
   generateConstructorLLVM(generator, sem::listNilName, sem::listNilTag, 0);
   generateConstructorLLVM(generator, sem::listConsName, sem::listConsTag, 2);
@@ -249,6 +318,7 @@ void Compiler::generateLLVM() {
   createLLVMBinop(DIVIDE);
   for (auto &op : comparisonOps)
     createLLVMComparison(op);
+  createLLVMCompose();
   createLLVMListConstructors();
 
   for (auto &defData : globalDefs.defsData) {

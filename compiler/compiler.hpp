@@ -34,6 +34,7 @@ private:
         void addListType();
         void addBinopType(binop op, std::shared_ptr<sem::Type> type);
         void addDefaultFunctionTypes();
+        void addComposeType();
         void addComparisonFunctionTypes();
         void parseFile(const std::string& path);
         void parse();
@@ -41,10 +42,14 @@ private:
         void translate();
         void compileDefinition(DefinitionDefn &definition);
         void compile();
+        void emitBuiltin(
+            llvm::Function *function,
+            const std::vector<std::unique_ptr<ir::Instruction>> &instructions);
         void createLLVMOperator(binop op,
                                 std::unique_ptr<ir::Instruction> operation);
         void createLLVMBinop(binop op);
         void createLLVMComparison(binop op);
+        void createLLVMCompose();
         void createLLVMListConstructors();
         void generateLLVM();
         void outputLLVM();

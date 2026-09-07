@@ -26,6 +26,8 @@
 - { return yy::parser::make_MINUS(LOC); }
 \/ { return yy::parser::make_DIVIDE(LOC); }
 [0-9]+ { return yy::parser::make_INT(atoi(yytext), LOC); }
+[0-9]+\.[0-9]+ { drv.reportError(LOC, "there are no fractional numbers, . composes two functions");
+    return yy::parser::make_YYEOF(LOC); }
 fun { return yy::parser::make_DEFN(LOC); }
 type { return yy::parser::make_DATA(LOC); }
 match { return yy::parser::make_CASE(LOC); }
@@ -44,6 +46,7 @@ else { return yy::parser::make_ELSE(LOC); }
 ,  { return yy::parser::make_COMMA(LOC); }
 -> { return yy::parser::make_ARROW(LOC); }
 \|> { return yy::parser::make_PIPE(LOC); }
+\. { return yy::parser::make_COMPOSE(LOC); }
 == { return yy::parser::make_EQUALEQUAL(LOC); }
 != { return yy::parser::make_NOTEQUAL(LOC); }
 \<= { return yy::parser::make_LESSEQUAL(LOC); }

@@ -34,6 +34,7 @@ using yyscan_t = void*;
 %token COMMA
 %token ARROW
 %token PIPE
+%token COMPOSE
 %token EQUAL
 %token EQUALEQUAL
 %token NOTEQUAL
@@ -65,7 +66,7 @@ using yyscan_t = void*;
 %type <std::vector<std::unique_ptr<Ast>>> listItems
 %type <std::vector<std::unique_ptr<Branch>>> branches
 %type <std::vector<std::unique_ptr<Constructor>>> constructors
-%type <std::unique_ptr<Ast>> expr comparison aAdd aMul case conditional lambda let list app appBase
+%type <std::unique_ptr<Ast>> expr comparison aAdd aMul composition case conditional lambda let list app appBase
 %type <binop> comparisonOp
 %type <std::unique_ptr<DefinitionData>> data
 %type <std::unique_ptr<DefinitionDefn>> defn
@@ -143,8 +144,21 @@ aAdd
     ;
 
 aMul
-    : aMul TIMES app { $$ = std::unique_ptr<Ast>(new AstBinop(TIMES, std::move($1), std::move($3), @$)); }
-    | aMul DIVIDE app { $$ = std::unique_ptr<Ast>(new AstBinop(DIVIDE, std::move($1), std::move($3), @$)); }
+    : aMul TIMES composition { $$ = std::unique_ptr<Ast>(new AstBinop(TIMES, std::move($1), std::move($3), @$)); }
+    | aMul DIVIDE composition { $$ = std::unique_ptr<Ast>(new AstBinop(DIVIDE, std::move($1), std::move($3), @$)); }
+    | composition { $$ = std::move($1); }
+    ;
+
+/* Composition binds tighter than the arithmetic operators and looser than
+ * application, and associates to the right, so `f . g . h` is `f . (g . h)`.
+ * A side that was never written is named here rather than left to come back
+ * as a syntax error about whatever token followed. */
+composition
+    : app COMPOSE composition
+        { $$ = std::unique_ptr<Ast>(new AstCompose(std::move($1), std::move($3), @$)); }
+    | app COMPOSE
+        { drv.reportError(@$, "the . operator needs a function on its right side");
+          YYABORT; }
     | app { $$ = std::move($1); }
     ;
 

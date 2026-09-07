@@ -260,6 +260,33 @@ public:
   void print(int indent, std::ostream &to) const override;
 };
 
+/* `f . g` is the function that hands its argument to g and its answer to f.
+ * It stands for the composition supercombinator applied to both sides, and
+ * stays a node of its own so a mistake in one of them can be named. */
+class AstCompose : public Ast {
+public:
+  std::unique_ptr<Ast> left;
+  std::unique_ptr<Ast> right;
+
+  AstCompose(std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs,
+             yy::location lc = yy::location())
+      : Ast(std::move(lc)), left(std::move(lhs)), right(std::move(rhs)) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
+
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
+
+  void translate(GlobalScope &scope) override;
+
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void print(int indent, std::ostream &to) const override;
+};
+
 class AstCase : public Ast {
 public:
   std::unique_ptr<Ast> of;
