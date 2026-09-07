@@ -17,6 +17,11 @@ public:
   virtual std::shared_ptr<Type> toType(const std::set<std::string> &vars,
                                        const TypeContext &typeCtx,
                                        const yy::location &loc) const = 0;
+
+  /* Collect the lowercase names this type mentions. A signature quantifies
+   * over the ones it writes, so they have to be gathered before any part of
+   * it is turned into a type. */
+  virtual void collectVariables(std::set<std::string> &into) const = 0;
 };
 
 class ParsedTypeApp : public ParsedType {
@@ -31,6 +36,8 @@ public:
   std::shared_ptr<Type> toType(const std::set<std::string> &vars,
                                const TypeContext &typeCtx,
                                const yy::location &loc) const override;
+
+  void collectVariables(std::set<std::string> &into) const override;
 };
 
 class ParsedTypeVar : public ParsedType {
@@ -42,6 +49,8 @@ public:
   std::shared_ptr<Type> toType(const std::set<std::string> &vars,
                                const TypeContext &typeCtx,
                                const yy::location &loc) const override;
+
+  void collectVariables(std::set<std::string> &into) const override;
 };
 
 class ParsedTypeArr : public ParsedType {
@@ -56,6 +65,8 @@ public:
   std::shared_ptr<Type> toType(const std::set<std::string> &vars,
                                const TypeContext &typeCtx,
                                const yy::location &loc) const override;
+
+  void collectVariables(std::set<std::string> &into) const override;
 };
 } // namespace sem
 } // namespace ff

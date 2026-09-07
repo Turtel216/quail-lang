@@ -32,6 +32,7 @@ using yyscan_t = void*;
 %token OBRACKET
 %token CBRACKET
 %token COMMA
+%token COLON
 %token ARROW
 %token PIPE
 %token COMPOSE
@@ -63,6 +64,9 @@ using yyscan_t = void*;
 %precedence ELSE
 
 %type <std::vector<std::string>> lowercaseParams uppercaseParams
+%type <std::vector<std::unique_ptr<Param>>> defnParams
+%type <std::unique_ptr<Param>> defnParam
+%type <std::unique_ptr<ff::sem::ParsedType>> returnAnnotation
 %type <std::vector<std::unique_ptr<Ast>>> listItems
 %type <std::vector<std::unique_ptr<Branch>>> branches
 %type <std::vector<std::unique_ptr<Constructor>>> constructors
@@ -96,9 +100,41 @@ definition
     ;
 
 defn
-    : DEFN LID lowercaseParams EQUAL OCURLY expr CCURLY
+    : DEFN LID defnParams returnAnnotation EQUAL OCURLY expr CCURLY
         { $$ = std::unique_ptr<DefinitionDefn>(
-            new DefinitionDefn(std::move($2), std::move($3), std::move($6), @$)); }
+            new DefinitionDefn(std::move($2), std::move($3), std::move($7), @$));
+          $$->returnAnnotation = std::move($4);
+          $$->returnAnnotationLoc = @4; }
+    ;
+
+/* Parameters of a definition. A bare name is left to be inferred; one in
+ * parentheses says what its type is. The two may be mixed freely, so a
+ * signature can pin down only the parts that are worth spelling out. */
+defnParams
+    : %empty { $$ = std::vector<std::unique_ptr<Param>>(); }
+    | defnParams defnParam { $$ = std::move($1); $$.push_back(std::move($2)); }
+    ;
+
+defnParam
+    : LID { $$ = std::unique_ptr<Param>(new Param(std::move($1), nullptr, @$)); }
+    | OPAREN LID COLON type CPAREN
+        { $$ = std::unique_ptr<Param>(new Param(std::move($2), std::move($4), @$)); }
+    | OPAREN LID CPAREN
+        { drv.reportError(@$, "an annotated parameter needs a type, as in (" + $2 + ": Int)");
+          YYABORT; }
+    | OPAREN LID COLON CPAREN
+        { drv.reportError(@$, "the parameter " + $2 + " is missing its type after the :");
+          YYABORT; }
+    ;
+
+/* The type a definition hands back. Written after the parameters, so a
+ * signature reads in the order the arguments are taken. */
+returnAnnotation
+    : %empty { $$ = nullptr; }
+    | COLON type { $$ = std::move($2); }
+    | COLON
+        { drv.reportError(@$, "the return type is missing after the :");
+          YYABORT; }
     ;
 
 lowercaseParams

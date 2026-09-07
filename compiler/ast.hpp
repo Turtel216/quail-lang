@@ -79,6 +79,19 @@ public:
       : pattern(std::move(_pattern)), expr(std::move(_expr)) {}
 };
 
+/* One parameter of a definition. `type` is the annotation the program wrote
+ * for it, or null when it left the parameter to be inferred. */
+class Param {
+public:
+  std::string name;
+  std::unique_ptr<ff::sem::ParsedType> type;
+  yy::location loc;
+
+  Param(std::string n, std::unique_ptr<ff::sem::ParsedType> t = nullptr,
+        yy::location lc = yy::location())
+      : name(std::move(n)), type(std::move(t)), loc(std::move(lc)) {}
+};
+
 class Constructor {
 public:
   std::string name;
@@ -390,8 +403,13 @@ public:
 class DefinitionDefn {
 public: // TODO: Fix encapsulation
   std::string name;
-  std::vector<std::string> params;
+  std::vector<std::unique_ptr<Param>> params;
   std::unique_ptr<Ast> body;
+
+  /* The declared return type, if the program wrote one, and where it wrote
+   * it so a bad type can be pointed at rather than described. */
+  std::unique_ptr<ff::sem::ParsedType> returnAnnotation;
+  yy::location returnAnnotationLoc;
 
   /* A local definition is reachable only through a stack slot, so anything
    * nested inside it that mentions one must take it as an extra parameter. */
@@ -411,11 +429,16 @@ public: // TODO: Fix encapsulation
 
   yy::location loc;
 
-  DefinitionDefn(std::string n, std::vector<std::string> p,
+  DefinitionDefn(std::string n, std::vector<std::unique_ptr<Param>> p,
                  std::unique_ptr<Ast> b, yy::location lc = yy::location())
       : name(std::move(n)), params(std::move(p)), body(std::move(b)),
         visibility(ff::sem::Visibility::Global), mangledName(name),
         loc(std::move(lc)) {}
+
+  /* Lambda lifting builds a definition out of names alone: a lambda writes
+   * no annotations, and neither do the captures prepended to a lifted one. */
+  DefinitionDefn(std::string n, const std::vector<std::string> &p,
+                 std::unique_ptr<Ast> b, yy::location lc = yy::location());
 
   void findFree(ff::sem::TypeManager &mgr,
                 std::shared_ptr<ff::sem::TypeContext> &typeCtx);

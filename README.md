@@ -13,6 +13,7 @@ The Quail toolchain includes `qc`, an Ahead-of-Time (AOT) compiler written in C+
 * **Strong Static Typing:** A Hindley-Milner type system ensures type safety at compile time without the need for verbose type annotations.
 * **Parametric Polymorphism:** Full support for polymorphic functions and polymorphic data types (e.g., generics).
 * **Pattern Matching:** Expressive `match ... with` syntax for destructing Algebraic Data Types (ADTs).
+* **Optional Annotations:** A parameter or a return type may be written out, one at a time; what is left off is inferred as before.
 * **Conditionals:** An `if ... else` expression that branches on a `Bool`.
 * **Comparisons:** The operators `==`, `!=`, `>`, `<`, `>=` and `<=` weigh two `Int`s against each other and answer with a `Bool`.
 * **Built-in Lists:** A primitive `List` type with bracket syntax (`[1, 2, 3]`) for literals.
@@ -68,40 +69,70 @@ fun add x y = {
 
 ```
 
-### Comparisons
+### Type Annotations
 
-Two `Int`s are weighed against each other with `==`, `!=`, `>`, `<`, `>=` or
-`<=`. The answer is an ordinary `Bool`, so it may be branched on, matched on,
-or passed around like any other value:
-
-```quail
-fun isPositive n = { n > 0 }
-
-fun sign n = {
-    match n == 0 with {
-        True -> { 0 }
-        False -> { if n > 0 { 1 } else { 0 - 1 } }
-    }
-}
-```
-
-A comparison binds looser than arithmetic, so both sides are worked out
-before they are weighed: `1 + 2 == 3` compares `3` with `3`. Only `|>` binds
-looser still.
-
-Comparisons do not chain. `a < b < c` would ask a `Bool` to stand where an
-`Int` belongs, so it is rejected outright rather than left to the type
-checker. Two of them are joined by branching on the first:
+A definition may say what its parameters and its result are. A parameter is
+annotated by putting it in parentheses with its type, and the result by
+writing the type after the parameters:
 
 ```quail
-fun between low x high = {
-    if low < x {
-        x < high
-    } else {
-        False
+fun add (x: Int) (y: Int) : Int = { x + y }
+
+fun main = { add 15 27 }
+```
+
+Nothing has to be annotated. Each parameter and the return type are separate
+choices, so a signature can pin down only the part worth spelling out and
+leave the rest to inference:
+
+```quail
+fun scale n (factor: Int) = { n * factor }
+
+fun answer : Int = { 42 }
+```
+
+Any type may be written: a built-in one, a declared one applied to its
+arguments, or a function type. Parentheses group as they do in an expression:
+
+```quail
+fun sum (xs: List Int) : Int = { foldr (\a b -> { a + b }) 0 xs }
+
+fun unwrap (m: Maybe Int) (fallback: Int) : Int = {
+    match m with {
+        Nothing -> { fallback }
+        Just v -> { v }
     }
 }
+
+fun apply (f: Int -> Int) (x: Int) : Int = { f (f x) }
 ```
+
+A lowercase name in a signature is a type variable, as it is in a `type`
+declaration, and stands for whatever fits. It belongs to the definition that
+wrote it, so two definitions do not share a type by both writing `a`:
+
+```quail
+type Pair a b = { MkPair a b }
+
+fun first (p: Pair a b) : a = { match p with { MkPair l r -> { l } } }
+```
+
+An annotation constrains inference rather than replacing it. A parameter
+holds its declared type everywhere in the body, so the use that disagrees is
+the one reported, and a body that does not have the declared return type is
+reported against the type the definition committed to:
+
+```quail
+fun add (x: Int) (y: Int) : Int = { True }
+```
+
+```
+an error occured while checking the types of the program: the body of add does not have its declared return type
+```
+
+`let` bindings are ordinary definitions, so they may be annotated the same
+way. Lambdas may not; they are written `\x -> { ... }` and are always
+inferred.
 
 ### Conditionals
 

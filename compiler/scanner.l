@@ -44,6 +44,7 @@ else { return yy::parser::make_ELSE(LOC); }
 \[ { return yy::parser::make_OBRACKET(LOC); }
 \] { return yy::parser::make_CBRACKET(LOC); }
 ,  { return yy::parser::make_COMMA(LOC); }
+: { return yy::parser::make_COLON(LOC); }
 -> { return yy::parser::make_ARROW(LOC); }
 \|> { return yy::parser::make_PIPE(LOC); }
 \. { return yy::parser::make_COMPOSE(LOC); }

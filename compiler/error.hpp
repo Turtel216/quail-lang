@@ -46,10 +46,14 @@ private:
   std::shared_ptr<ff::sem::Type> right;
 
 public:
+  /* `description` names the mistake when there is a better way to put it
+   * than that two types did not fit, as there is when one of them is a type
+   * the program declared for itself. */
   UnificationError(std::shared_ptr<ff::sem::Type> l,
                    std::shared_ptr<ff::sem::Type> r,
-                   MaybeLocation loc = std::nullopt)
-      : TypeError("failed to unify types", std::move(loc)), left(std::move(l)),
+                   MaybeLocation loc = std::nullopt,
+                   std::string description = "failed to unify types")
+      : TypeError(std::move(description), std::move(loc)), left(std::move(l)),
         right(std::move(r)) {}
 
   using TypeError::prettyPrint;

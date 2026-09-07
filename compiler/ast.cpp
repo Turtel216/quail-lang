@@ -34,6 +34,39 @@ std::unique_ptr<Ast> partialApplication(const DefinitionDefn &definition) {
   return application;
 }
 
+/* The type variables a signature writes, and the fresh variables they stand
+ * for. Each definition gets its own set: two definitions that both write `a`
+ * are not thereby talking about the same type. */
+struct SignatureVars {
+  std::set<std::string> written;
+  std::map<std::string, std::shared_ptr<ff::sem::Type>> fresh;
+};
+
+SignatureVars signatureVars(ff::sem::TypeManager &mgr,
+                            const DefinitionDefn &definition) {
+  SignatureVars vars;
+
+  for (auto &param : definition.params) {
+    if (param->type)
+      param->type->collectVariables(vars.written);
+  }
+  if (definition.returnAnnotation)
+    definition.returnAnnotation->collectVariables(vars.written);
+
+  for (auto &name : vars.written)
+    vars.fresh[name] = mgr.newType();
+
+  return vars;
+}
+
+std::shared_ptr<ff::sem::Type>
+resolveAnnotation(ff::sem::TypeManager &mgr, const ff::sem::ParsedType &parsed,
+                  const SignatureVars &vars,
+                  const ff::sem::TypeContext &typeCtx,
+                  const yy::location &loc) {
+  return mgr.substitute(vars.fresh, parsed.toType(vars.written, typeCtx, loc));
+}
+
 /* Report an operand whose type is already known to be one the operator
  * cannot take. Unification would notice it too, but only as two types that
  * did not fit, without saying which side of the operator went wrong. */
@@ -841,7 +874,7 @@ void AstLet::print(int indent, std::ostream &to) const {
     printIndent(indent + 1, to);
     to << pair.first;
     for (auto &param : pair.second->params) {
-      to << " " << param;
+      to << " " << param->name;
     }
     to << ":" << std::endl;
     pair.second->body->print(indent + 2, to);
@@ -917,24 +950,44 @@ void PatternConstr::print(std::ostream &to) const {
 
 // ############ Definitions ############
 
+DefinitionDefn::DefinitionDefn(std::string n, const std::vector<std::string> &p,
+                               std::unique_ptr<Ast> b, yy::location lc)
+    : name(std::move(n)), body(std::move(b)),
+      visibility(ff::sem::Visibility::Global), mangledName(name),
+      loc(std::move(lc)) {
+  for (auto &param : p)
+    params.push_back(std::unique_ptr<Param>(new Param(param)));
+}
+
 void DefinitionDefn::findFree(ff::sem::TypeManager &mgr,
                               std::shared_ptr<ff::sem::TypeContext> &typeCtx) {
   this->typeContext = typeCtx;
 
   varContext = ff::sem::typeScope(typeCtx);
-  returnType = mgr.newType();
+
+  /* Whatever the signature declared is used as it stands; the rest is left
+   * open for inference to fill in, exactly as before. */
+  auto signature = signatureVars(mgr, *this);
+
+  returnType = returnAnnotation
+                   ? resolveAnnotation(mgr, *returnAnnotation, signature,
+                                       *typeCtx, returnAnnotationLoc)
+                   : mgr.newType();
   fullType = returnType;
 
   for (auto it = params.rbegin(); it != params.rend(); it++) {
-    auto paramType = mgr.newType();
+    auto &param = **it;
+    auto paramType = param.type ? resolveAnnotation(mgr, *param.type, signature,
+                                                    *typeCtx, param.loc)
+                                : mgr.newType();
     fullType = std::shared_ptr<ff::sem::Type>(
         new ff::sem::TypeArr(paramType, fullType));
-    varContext->bind(*it, paramType);
+    varContext->bind(param.name, paramType);
   }
 
   body->findFree(mgr, varContext, freeVariables);
   for (auto &param : params) {
-    freeVariables.erase(param);
+    freeVariables.erase(param->name);
   }
 }
 
@@ -944,7 +997,22 @@ void DefinitionDefn::insertTypes(ff::sem::TypeManager &) {
 
 void DefinitionDefn::typecheck(ff::sem::TypeManager &mgr) {
   auto bodyType = body->typecheck(mgr);
-  mgr.unify(returnType, bodyType, body->loc);
+
+  if (!returnAnnotation) {
+    mgr.unify(returnType, bodyType, body->loc);
+    return;
+  }
+
+  /* A declared return type is what the definition committed to, so the two
+   * whole types are worth showing rather than whichever pair of pieces deep
+   * inside them happened not to fit. */
+  try {
+    mgr.unify(returnType, bodyType, body->loc);
+  } catch (const ff::UnificationError &) {
+    throw ff::UnificationError(returnType, bodyType, body->loc,
+                               "the body of " + name +
+                                   " does not have its declared return type");
+  }
 }
 
 void DefinitionDefn::translate(GlobalScope &scope) {
@@ -961,8 +1029,15 @@ void DefinitionDefn::translate(GlobalScope &scope) {
       capturedVariables.insert(free);
   }
 
-  params.insert(params.begin(), capturedVariables.begin(),
-                capturedVariables.end());
+  std::vector<std::unique_ptr<Param>> withCaptures;
+  for (auto &captured : capturedVariables)
+    withCaptures.push_back(std::unique_ptr<Param>(new Param(captured)));
+
+  withCaptures.insert(withCaptures.end(),
+                      std::make_move_iterator(params.begin()),
+                      std::make_move_iterator(params.end()));
+  params = std::move(withCaptures);
+
   scope.add(*this);
 }
 
@@ -972,7 +1047,7 @@ void DefinitionDefn::compile() {
 
   for (auto it = params.rbegin(); it != params.rend(); it++) {
     newEnv = std::shared_ptr<ff::ir::Enviroment>(
-        new ff::ir::EnviromentVar(*it, newEnv));
+        new ff::ir::EnviromentVar((*it)->name, newEnv));
   }
   body->generate(newEnv, instructions);
   instructions.push_back(

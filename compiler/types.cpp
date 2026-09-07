@@ -242,6 +242,11 @@ std::shared_ptr<Type> ParsedTypeApp::toType(const std::set<std::string> &vars,
   return toReturn;
 }
 
+void ParsedTypeApp::collectVariables(std::set<std::string> &into) const {
+  for (auto &arg : arguments)
+    arg->collectVariables(into);
+}
+
 std::shared_ptr<Type> ParsedTypeVar::toType(const std::set<std::string> &vars,
                                             const TypeContext &,
                                             const yy::location &loc) const {
@@ -249,6 +254,10 @@ std::shared_ptr<Type> ParsedTypeVar::toType(const std::set<std::string> &vars,
     throw ff::TypeError("unbound type variable " + var, loc);
 
   return std::shared_ptr<Type>(new TypeVar(var));
+}
+
+void ParsedTypeVar::collectVariables(std::set<std::string> &into) const {
+  into.insert(var);
 }
 
 std::shared_ptr<Type> ParsedTypeArr::toType(const std::set<std::string> &vars,
@@ -259,6 +268,11 @@ std::shared_ptr<Type> ParsedTypeArr::toType(const std::set<std::string> &vars,
 
   return std::shared_ptr<Type>(
       new TypeArr(std::move(newLeft), std::move(newRight)));
+}
+
+void ParsedTypeArr::collectVariables(std::set<std::string> &into) const {
+  left->collectVariables(into);
+  right->collectVariables(into);
 }
 
 } // namespace sem
