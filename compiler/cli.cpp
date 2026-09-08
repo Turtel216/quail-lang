@@ -13,6 +13,8 @@ void Cli::printUsage(const char *progName) const {
   std::cout << "Usage: " << progName << " [source_file] [options]\n"
             << "Options:\n"
             << "  -o <path>      Specify the output file path\n"
+            << "  --dump-ast     Print the structure of the parsed program\n"
+            << "  --dump-source  Print the parsed program back out as source\n"
             << "  --help         Display this information\n";
 }
 
@@ -25,6 +27,10 @@ void Cli::parse(int argc, char *argv[]) {
     if (arg == "-h" || arg == "--help") {
       helpRequested = true;
       return;
+    } else if (arg == "--dump-ast") {
+      dump = DumpKind::Ast;
+    } else if (arg == "--dump-source") {
+      dump = DumpKind::Source;
     } else if (arg == "-o") {
       if (i + 1 < args.size()) {
         outputFile = args[++i];

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ast.hpp"
+#include "cli.hpp"
 #include "context.hpp"
 #include "file_manager.hpp"
 #include "generator.hpp"
@@ -29,6 +30,7 @@ private:
    * declares once it has been parsed. */
   int boolTrueTag = 0;
   int boolFalseTag = 0;
+  DumpKind dumpKind;
 
         void addDefaultTypes();
         void addListType();
@@ -38,6 +40,7 @@ private:
         void addComparisonFunctionTypes();
         void parseFile(const std::string& path);
         void parse();
+        void dump();
         void typecheck();
         void translate();
         void compileDefinition(DefinitionDefn &definition);
@@ -57,7 +60,8 @@ private:
         void cleanUp();
 
 public:
-        Compiler(const std::string& input, const std::string& output);
+        Compiler(const std::string &input, const std::string &output,
+                 DumpKind dump = DumpKind::None);
         void operator()();
         FileManager& getFileManager();
         const sem::TypeManager& getTypeManager() const;

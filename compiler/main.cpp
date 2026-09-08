@@ -12,7 +12,7 @@ int main(int argc, char *argv[]) {
       return 0;
     }
 
-    ff::drv::Compiler comp(cli.sourceFile, cli.outputFile);
+    ff::drv::Compiler comp(cli.sourceFile, cli.outputFile, cli.dump);
 
     try {
       comp();

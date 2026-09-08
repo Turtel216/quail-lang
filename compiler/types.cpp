@@ -275,5 +275,62 @@ void ParsedTypeArr::collectVariables(std::set<std::string> &into) const {
   right->collectVariables(into);
 }
 
+/* The printers below write a type back out as source. Everything compound is
+ * parenthesized: the parentheses do not survive parsing, so printing what was
+ * printed once yields the same text again. */
+
+void ParsedTypeApp::printSource(std::ostream &to) const {
+  if (arguments.empty()) {
+    to << name;
+    return;
+  }
+
+  to << "(" << name;
+  for (auto &argument : arguments) {
+    to << " ";
+    argument->printSource(to);
+  }
+  to << ")";
+}
+
+void ParsedTypeVar::printSource(std::ostream &to) const { to << var; }
+
+void ParsedTypeArr::printSource(std::ostream &to) const {
+  to << "(";
+  left->printSource(to);
+  to << " -> ";
+  right->printSource(to);
+  to << ")";
+}
+
+void ParsedPred::collectVariables(std::set<std::string> &into) const {
+  for (auto &argument : arguments)
+    argument->collectVariables(into);
+}
+
+void ParsedPred::printSource(std::ostream &to) const {
+  to << className;
+  for (auto &argument : arguments) {
+    to << " ";
+    argument->printSource(to);
+  }
+}
+
+/* A context is always printed in its parenthesized form, so that one
+ * predicate and several are written the same way. Both spellings parse to
+ * the same list, so a program that wrote the bare form still round trips. */
+void printContextSource(const ParsedContext &context, std::ostream &to) {
+  if (context.empty())
+    return;
+
+  to << "(";
+  for (auto it = context.begin(); it != context.end(); it++) {
+    if (it != context.begin())
+      to << ", ";
+    (*it)->printSource(to);
+  }
+  to << ") => ";
+}
+
 } // namespace sem
 } // namespace ff

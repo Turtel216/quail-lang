@@ -179,6 +179,25 @@ void Compiler::parse() {
   parseFile(inputFile);
 }
 
+/* Write the program out instead of compiling it. The prelude is left unread:
+ * a dump is asked for in order to see one file, and putting the prelude in
+ * front of it would bury the answer and stop a printed program from being
+ * handed straight back in. */
+void Compiler::dump() {
+  parseFile(inputFile);
+
+  switch (dumpKind) {
+  case DumpKind::Ast:
+    globalDefs.print(0, std::cout);
+    break;
+  case DumpKind::Source:
+    globalDefs.printSource(std::cout);
+    break;
+  case DumpKind::None:
+    break;
+  }
+}
+
 void Compiler::typecheck() {
   std::set<std::string> freeVariables;
   globalDefs.findFree(manager, globalContext, ff::sem::Visibility::Global,
@@ -220,10 +239,11 @@ void Compiler::compileDefinition(DefinitionDefn &definition) {
   definition.compile();
 }
 
-Compiler::Compiler(const std::string &input, const std::string &output)
+Compiler::Compiler(const std::string &input, const std::string &output,
+                   DumpKind dump)
     : fileManager(), globalDefs(), globalContext(new sem::TypeContext),
       mangler(), manager(), globalScope(mangler), generator(), inputFile(input),
-      outputFile(output), objectFile("object.o") {
+      outputFile(output), objectFile("object.o"), dumpKind(dump) {
   addDefaultTypes();
   addDefaultFunctionTypes();
 }
@@ -384,6 +404,11 @@ void Compiler::outputLLVM() {
 }
 
 void Compiler::operator()() {
+  if (dumpKind != DumpKind::None) {
+    dump();
+    return;
+  }
+
   parse();
   typecheck();
   translate();
