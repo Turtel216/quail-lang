@@ -50,6 +50,11 @@ public:
            std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const = 0;
 
   virtual void print(int indent, std::ostream &to) const = 0;
+
+  /* Write this subtree back out as the source that would parse to it again.
+   * Everything compound is parenthesized, so printing twice is printing
+   * once: the parentheses leave no trace in the tree they came from. */
+  virtual void printSource(std::ostream &to) const = 0;
 };
 
 class Pattern {
@@ -61,6 +66,7 @@ public:
   virtual ~Pattern() = default;
 
   virtual void print(std::ostream &to) const = 0;
+  virtual void printSource(std::ostream &to) const = 0;
   virtual void
   insertBindings(ff::sem::TypeManager &mgr,
                  std::shared_ptr<ff::sem::TypeContext> &typeCtx) const = 0;
@@ -123,6 +129,8 @@ public:
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstLid : public Ast {
@@ -148,6 +156,8 @@ public:
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstUid : public Ast {
@@ -169,6 +179,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 /* A list literal. It stands for the same chain of Cons applications ending
@@ -194,6 +206,8 @@ public:
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstBinop : public Ast {
@@ -220,6 +234,8 @@ public:
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstApp : public Ast {
@@ -243,6 +259,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 /* `value |> function` hands the value on the left to the function on the
@@ -271,6 +289,8 @@ public:
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 /* `f . g` is the function that hands its argument to g and its answer to f.
@@ -298,6 +318,8 @@ public:
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstCase : public Ast {
@@ -325,6 +347,8 @@ public:
   void translate(GlobalScope &scope) override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 /* `if cond { ... } else { ... }`. It is a case analysis of the two Bool
@@ -358,6 +382,8 @@ public:
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class PatternVar : public Pattern {
@@ -377,6 +403,8 @@ public:
                  std::shared_ptr<ff::sem::TypeContext> &typeCtx) const override;
 
   void print(std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class PatternConstr : public Pattern {
@@ -398,13 +426,22 @@ public:
                  std::shared_ptr<ff::sem::TypeContext> &typeCtx) const override;
 
   void print(std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class DefinitionDefn {
 public: // TODO: Fix encapsulation
   std::string name;
   std::vector<std::unique_ptr<Param>> params;
+  /* Null only for a class method that declares its signature and leaves the
+   * implementation to each instance. Such a definition lives in the class it
+   * was written in and never reaches inference or code generation. */
   std::unique_ptr<Ast> body;
+
+  /* The constraints the definition wrote to the left of its =>. Empty when
+   * it wrote none, which is every definition that predates type classes. */
+  ff::sem::ParsedContext context;
 
   /* The declared return type, if the program wrote one, and where it wrote
    * it so a bad type can be pointed at rather than described. */
@@ -448,6 +485,11 @@ public: // TODO: Fix encapsulation
   void compile();
   void declareLLVM(ff::cg::CodeGenerator &generator);
   void generateLLVM(ff::cg::CodeGenerator &generator);
+
+  void print(int indent, std::ostream &to) const;
+  /* `keyword` is what introduces the definition in the source. A class method
+   * without a body stops after its signature. */
+  void printSource(std::ostream &to, int indent) const;
 };
 
 /* Emit the supercombinator behind a data constructor: pack its arguments
@@ -476,7 +518,72 @@ public:
   void insertTypes(std::shared_ptr<ff::sem::TypeContext> &typeCtx);
   void insertConstructors() const;
   void generateLLVM(ff::cg::CodeGenerator &generator);
+
+  void print(int indent, std::ostream &to) const;
+  void printSource(std::ostream &to) const;
 };
+
+/* A class declaration: the head it abstracts over, the classes every
+ * instance of it must already be an instance of, and its methods.
+ *
+ * The head is kept as written, a class name applied to arguments, so that a
+ * class over something other than one type variable is reported by the class
+ * environment rather than failing to parse.
+ *
+ * Methods are held in a vector rather than a map because their order is the
+ * order the class body wrote them in, and that order becomes the field order
+ * of the dictionary. A method with a body is a default implementation, used
+ * by an instance that does not provide its own. */
+class DefinitionClass {
+public:
+  ff::sem::ParsedContext supers;
+  std::unique_ptr<ff::sem::ParsedPred> head;
+  std::vector<std::unique_ptr<DefinitionDefn>> methods;
+
+  yy::location loc;
+
+  DefinitionClass(ff::sem::ParsedContext ss,
+                  std::unique_ptr<ff::sem::ParsedPred> h,
+                  std::vector<std::unique_ptr<DefinitionDefn>> ms,
+                  yy::location lc = yy::location())
+      : supers(std::move(ss)), head(std::move(h)), methods(std::move(ms)),
+        loc(std::move(lc)) {}
+
+  inline const std::string &getName() const noexcept {
+    return this->head->className;
+  }
+
+  void print(int indent, std::ostream &to) const;
+  void printSource(std::ostream &to) const;
+};
+
+/* An instance declaration: what it claims, what it needs in order to claim
+ * it, and the methods it provides. The head is kept as the program wrote it,
+ * a class name applied to arguments, so that a head with the wrong number of
+ * them can be reported as such instead of failing to parse. */
+class DefinitionInstance {
+public:
+  ff::sem::ParsedContext context;
+  std::unique_ptr<ff::sem::ParsedPred> head;
+  std::vector<std::unique_ptr<DefinitionDefn>> methods;
+
+  yy::location loc;
+
+  DefinitionInstance(ff::sem::ParsedContext c,
+                     std::unique_ptr<ff::sem::ParsedPred> h,
+                     std::vector<std::unique_ptr<DefinitionDefn>> ms,
+                     yy::location lc = yy::location())
+      : context(std::move(c)), head(std::move(h)), methods(std::move(ms)),
+        loc(std::move(lc)) {}
+
+  void print(int indent, std::ostream &to) const;
+  void printSource(std::ostream &to) const;
+};
+
+/* The second of two methods written under the same name, or null when every
+ * method in the list is written once. */
+const DefinitionDefn *findDuplicateMethod(
+    const std::vector<std::unique_ptr<DefinitionDefn>> &methods);
 
 /* Definitions that share a scope and may refer to one another: the whole
  * program at the top level, or the bindings of a single let. */
@@ -484,6 +591,11 @@ class DefinitionGroup {
 public:
   std::map<std::string, std::unique_ptr<DefinitionData>> defsData;
   std::map<std::string, std::unique_ptr<DefinitionDefn>> defsDefn;
+  /* Classes and instances are top level only; a let binds values, not the
+   * meaning of a name for every type at once. Instances are kept in source
+   * order because, unlike a class, an instance has no name to key it by. */
+  std::map<std::string, std::unique_ptr<DefinitionClass>> defsClass;
+  std::vector<std::unique_ptr<DefinitionInstance>> defsInstance;
 
   std::shared_ptr<ff::sem::TypeContext> typeContext;
   /* Mutually recursive members, in dependency order. */
@@ -494,6 +606,9 @@ public:
                 ff::sem::Visibility visibility, std::set<std::string> &into);
   void typecheck(ff::sem::TypeManager &mgr);
   void translate(GlobalScope &scope);
+
+  void print(int indent, std::ostream &to) const;
+  void printSource(std::ostream &to) const;
 };
 
 /* Registry of the functions produced by lambda lifting. Entries are
@@ -549,6 +664,8 @@ public:
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstLet : public Ast {
@@ -582,4 +699,6 @@ public:
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };

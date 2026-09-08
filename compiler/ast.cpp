@@ -210,7 +210,7 @@ void AstLid::generate(
 
 void AstLid::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
-  to << "INT: " << id << std::endl;
+  to << "LID: " << id << std::endl;
 }
 
 std::shared_ptr<ff::sem::Type> AstUid::typecheck(ff::sem::TypeManager &mgr) {
@@ -237,7 +237,7 @@ void AstUid::generate(
 
 void AstUid::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
-  to << "INT: " << id << std::endl;
+  to << "UID: " << id << std::endl;
 }
 
 std::shared_ptr<ff::sem::Type> AstList::typecheck(ff::sem::TypeManager &mgr) {
@@ -1151,6 +1151,16 @@ void DefinitionData::generateLLVM(ff::cg::CodeGenerator &generator) {
   }
 }
 
+const DefinitionDefn *findDuplicateMethod(
+    const std::vector<std::unique_ptr<DefinitionDefn>> &methods) {
+  std::set<std::string> seen;
+  for (auto &method : methods) {
+    if (!seen.insert(method->name).second)
+      return method.get();
+  }
+  return nullptr;
+}
+
 // ############ Groups ############
 
 void DefinitionGroup::findFree(ff::sem::TypeManager &mgr,
@@ -1233,4 +1243,315 @@ void GlobalScope::add(DefinitionDefn &definition) {
    * next free variation of it. */
   definition.mangledName = mangle(definition.name);
   definitions.push_back(&definition);
+}
+
+// ############ Source printing ############
+
+/* Writing the tree back out as source is what makes a parse test able to say
+ * that two programs are the same program. Everything compound is
+ * parenthesized: parentheses build no node of their own, so what is printed
+ * parses to the tree it was printed from, and printing that again is the
+ * same text. */
+
+namespace {
+
+void printParamsSource(const std::vector<std::unique_ptr<Param>> &params,
+                       std::ostream &to) {
+  for (auto &param : params) {
+    to << " ";
+    if (!param->type) {
+      to << param->name;
+      continue;
+    }
+
+    to << "(" << param->name << ": ";
+    param->type->printSource(to);
+    to << ")";
+  }
+}
+
+} // namespace
+
+void AstInt::printSource(std::ostream &to) const { to << value; }
+
+void AstLid::printSource(std::ostream &to) const { to << id; }
+
+void AstUid::printSource(std::ostream &to) const { to << id; }
+
+void AstList::printSource(std::ostream &to) const {
+  to << "[";
+  for (auto it = items.begin(); it != items.end(); it++) {
+    if (it != items.begin())
+      to << ", ";
+    (*it)->printSource(to);
+  }
+  to << "]";
+}
+
+void AstBinop::printSource(std::ostream &to) const {
+  to << "(";
+  left->printSource(to);
+  to << " " << opName(op) << " ";
+  right->printSource(to);
+  to << ")";
+}
+
+void AstApp::printSource(std::ostream &to) const {
+  to << "(";
+  left->printSource(to);
+  to << " ";
+  right->printSource(to);
+  to << ")";
+}
+
+void AstPipe::printSource(std::ostream &to) const {
+  to << "(";
+  value->printSource(to);
+  to << " |> ";
+  function->printSource(to);
+  to << ")";
+}
+
+void AstCompose::printSource(std::ostream &to) const {
+  to << "(";
+  left->printSource(to);
+  to << " . ";
+  right->printSource(to);
+  to << ")";
+}
+
+void AstCase::printSource(std::ostream &to) const {
+  to << "(match ";
+  of->printSource(to);
+  to << " with { ";
+  for (auto &branch : branches) {
+    branch->pattern->printSource(to);
+    to << " -> { ";
+    branch->expr->printSource(to);
+    to << " } ";
+  }
+  to << "})";
+}
+
+void AstIf::printSource(std::ostream &to) const {
+  to << "(if ";
+  condition->printSource(to);
+  to << " { ";
+  thenBranch->printSource(to);
+  to << " } else { ";
+  elseBranch->printSource(to);
+  to << " })";
+}
+
+void AstLambda::printSource(std::ostream &to) const {
+  to << "(\\";
+  for (auto it = params.begin(); it != params.end(); it++) {
+    if (it != params.begin())
+      to << " ";
+    to << *it;
+  }
+  to << " -> { ";
+  body->printSource(to);
+  to << " })";
+}
+
+void AstLet::printSource(std::ostream &to) const {
+  to << "(let { ";
+  for (auto &pair : definitions->defsDefn) {
+    pair.second->printSource(to, 0);
+    to << " ";
+  }
+  to << "} in { ";
+  in->printSource(to);
+  to << " })";
+}
+
+void PatternVar::printSource(std::ostream &to) const { print(to); }
+
+void PatternConstr::printSource(std::ostream &to) const { print(to); }
+
+void DefinitionDefn::printSource(std::ostream &to, int indent) const {
+  printIndent(indent, to);
+  to << "fun ";
+  ff::sem::printContextSource(context, to);
+  to << name;
+  printParamsSource(params, to);
+
+  if (returnAnnotation) {
+    to << " : ";
+    returnAnnotation->printSource(to);
+  }
+
+  /* A class method that declares only its signature ends here; there is no
+   * body for an instance to override yet. */
+  if (!body)
+    return;
+
+  to << " = { ";
+  body->printSource(to);
+  to << " }";
+}
+
+void DefinitionData::printSource(std::ostream &to) const {
+  to << "type " << name;
+  for (auto &var : vars)
+    to << " " << var;
+
+  to << " = {";
+  for (auto it = constructors.begin(); it != constructors.end(); it++) {
+    if (it != constructors.begin())
+      to << ",";
+    to << " " << (*it)->name;
+    for (auto &type : (*it)->types) {
+      to << " ";
+      type->printSource(to);
+    }
+  }
+  to << " }";
+}
+
+void DefinitionClass::printSource(std::ostream &to) const {
+  to << "class ";
+  ff::sem::printContextSource(supers, to);
+  head->printSource(to);
+  to << " = {" << std::endl;
+
+  for (auto &method : methods) {
+    method->printSource(to, 1);
+    to << std::endl;
+  }
+  to << "}";
+}
+
+void DefinitionInstance::printSource(std::ostream &to) const {
+  to << "instance ";
+  ff::sem::printContextSource(context, to);
+  head->printSource(to);
+  to << " = {" << std::endl;
+
+  for (auto &method : methods) {
+    method->printSource(to, 1);
+    to << std::endl;
+  }
+  to << "}";
+}
+
+void DefinitionGroup::printSource(std::ostream &to) const {
+  for (auto &pair : defsData) {
+    pair.second->printSource(to);
+    to << std::endl << std::endl;
+  }
+  for (auto &pair : defsClass) {
+    pair.second->printSource(to);
+    to << std::endl << std::endl;
+  }
+  for (auto &instance : defsInstance) {
+    instance->printSource(to);
+    to << std::endl << std::endl;
+  }
+  for (auto &pair : defsDefn) {
+    pair.second->printSource(to, 0);
+    to << std::endl << std::endl;
+  }
+}
+
+// ############ Structure dumping ############
+
+/* The dump says what the tree is, not how it was written: two programs that
+ * differ only in the parentheses or the spacing they used dump the same. It
+ * is what a round trip is checked against. */
+
+void DefinitionDefn::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "DEFN: " << name << std::endl;
+
+  for (auto &pred : context) {
+    printIndent(indent + 1, to);
+    to << "CONTEXT: ";
+    pred->printSource(to);
+    to << std::endl;
+  }
+
+  for (auto &param : params) {
+    printIndent(indent + 1, to);
+    to << "PARAM: " << param->name;
+    if (param->type) {
+      to << " : ";
+      param->type->printSource(to);
+    }
+    to << std::endl;
+  }
+
+  if (returnAnnotation) {
+    printIndent(indent + 1, to);
+    to << "RETURN: ";
+    returnAnnotation->printSource(to);
+    to << std::endl;
+  }
+
+  if (body)
+    body->print(indent + 1, to);
+}
+
+void DefinitionData::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "DATA: " << name;
+  for (auto &var : vars)
+    to << " " << var;
+  to << std::endl;
+
+  for (auto &constructor : constructors) {
+    printIndent(indent + 1, to);
+    to << "CONSTRUCTOR: " << constructor->name;
+    for (auto &type : constructor->types) {
+      to << " ";
+      type->printSource(to);
+    }
+    to << std::endl;
+  }
+}
+
+void DefinitionClass::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "CLASS: ";
+  head->printSource(to);
+  to << std::endl;
+
+  for (auto &super : supers) {
+    printIndent(indent + 1, to);
+    to << "SUPER: ";
+    super->printSource(to);
+    to << std::endl;
+  }
+
+  for (auto &method : methods)
+    method->print(indent + 1, to);
+}
+
+void DefinitionInstance::print(int indent, std::ostream &to) const {
+  printIndent(indent, to);
+  to << "INSTANCE: ";
+  head->printSource(to);
+  to << std::endl;
+
+  for (auto &pred : context) {
+    printIndent(indent + 1, to);
+    to << "CONTEXT: ";
+    pred->printSource(to);
+    to << std::endl;
+  }
+
+  for (auto &method : methods)
+    method->print(indent + 1, to);
+}
+
+void DefinitionGroup::print(int indent, std::ostream &to) const {
+  for (auto &pair : defsData)
+    pair.second->print(indent, to);
+  for (auto &pair : defsClass)
+    pair.second->print(indent, to);
+  for (auto &instance : defsInstance)
+    instance->print(indent, to);
+  for (auto &pair : defsDefn)
+    pair.second->print(indent, to);
 }
