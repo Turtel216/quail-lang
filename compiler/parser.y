@@ -173,9 +173,7 @@ class
 /* A method either declares its signature and leaves every instance to
  * implement it, or declares it and supplies the body to fall back on. */
 classMethods
-    : classMethod
-        { $$ = std::vector<std::unique_ptr<DefinitionDefn>>();
-          $$.push_back(std::move($1)); }
+    : %empty { $$ = std::vector<std::unique_ptr<DefinitionDefn>>(); }
     | classMethods classMethod { $$ = std::move($1); $$.push_back(std::move($2)); }
     ;
 
@@ -185,6 +183,9 @@ classMethod
             new DefinitionDefn(std::move($2), std::move($3), nullptr, @$));
           $$->returnAnnotation = std::move($4);
           $$->returnAnnotationLoc = @4; }
+    | DEFN context FATARROW LID defnParams returnAnnotation
+        { drv.reportError(@$, "the method " + $4 + " writes a context of its own; a method is already constrained by the class it belongs to");
+          YYABORT; }
     | defn { $$ = std::move($1); }
     ;
 
@@ -200,9 +201,7 @@ instance
     ;
 
 instanceMethods
-    : defn
-        { $$ = std::vector<std::unique_ptr<DefinitionDefn>>();
-          $$.push_back(std::move($1)); }
+    : %empty { $$ = std::vector<std::unique_ptr<DefinitionDefn>>(); }
     | instanceMethods defn { $$ = std::move($1); $$.push_back(std::move($2)); }
     ;
 

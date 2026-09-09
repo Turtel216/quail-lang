@@ -15,6 +15,7 @@ void Cli::printUsage(const char *progName) const {
             << "  -o <path>      Specify the output file path\n"
             << "  --dump-ast     Print the structure of the parsed program\n"
             << "  --dump-source  Print the parsed program back out as source\n"
+            << "  --check-classes Check the classes and instances and print them\n"
             << "  --help         Display this information\n";
 }
 
@@ -31,6 +32,8 @@ void Cli::parse(int argc, char *argv[]) {
       dump = DumpKind::Ast;
     } else if (arg == "--dump-source") {
       dump = DumpKind::Source;
+    } else if (arg == "--check-classes") {
+      dump = DumpKind::Classes;
     } else if (arg == "-o") {
       if (i + 1 < args.size()) {
         outputFile = args[++i];

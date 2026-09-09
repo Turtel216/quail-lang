@@ -13,7 +13,9 @@ enum class DumpKind {
   /* The tree as structure: what the program says, not how it was written. */
   Ast,
   /* The tree as source: what would parse back to the same structure. */
-  Source
+  Source,
+  /* The classes and instances the program declares, once checked over. */
+  Classes
 };
 
 class Cli {

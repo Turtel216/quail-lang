@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ast.hpp"
+#include "classes.hpp"
 #include "cli.hpp"
 #include "context.hpp"
 #include "file_manager.hpp"
@@ -17,6 +18,7 @@ private:
   ff::drv::FileManager fileManager;
   DefinitionGroup globalDefs;
   std::shared_ptr<sem::TypeContext> globalContext;
+  sem::ClassEnv classEnv;
   Mangler mangler;
   sem::TypeManager manager;
   GlobalScope globalScope;
@@ -41,6 +43,7 @@ private:
         void parseFile(const std::string& path);
         void parse();
         void dump();
+        void buildClassEnv();
         void typecheck();
         void translate();
         void compileDefinition(DefinitionDefn &definition);

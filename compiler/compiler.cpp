@@ -179,6 +179,15 @@ void Compiler::parse() {
   parseFile(inputFile);
 }
 
+/* What every class and instance in the program comes to, checked over before
+ * anything asks a question of it. The data declarations are bound first: an
+ * instance head names a type, so the types have to be in scope, but nothing
+ * about a class depends on inference having started. */
+void Compiler::buildClassEnv() {
+  globalDefs.insertDataTypes(globalContext);
+  classEnv.build(globalDefs, *globalContext);
+}
+
 /* Write the program out instead of compiling it. The prelude is left unread:
  * a dump is asked for in order to see one file, and putting the prelude in
  * front of it would bury the answer and stop a printed program from being
@@ -193,12 +202,18 @@ void Compiler::dump() {
   case DumpKind::Source:
     globalDefs.printSource(std::cout);
     break;
+  case DumpKind::Classes:
+    buildClassEnv();
+    classEnv.print(std::cout);
+    break;
   case DumpKind::None:
     break;
   }
 }
 
 void Compiler::typecheck() {
+  buildClassEnv();
+
   std::set<std::string> freeVariables;
   globalDefs.findFree(manager, globalContext, ff::sem::Visibility::Global,
                       freeVariables);
@@ -242,7 +257,8 @@ void Compiler::compileDefinition(DefinitionDefn &definition) {
 Compiler::Compiler(const std::string &input, const std::string &output,
                    DumpKind dump)
     : fileManager(), globalDefs(), globalContext(new sem::TypeContext),
-      mangler(), manager(), globalScope(mangler), generator(), inputFile(input),
+      classEnv(), mangler(), manager(), globalScope(mangler), generator(),
+      inputFile(input),
       outputFile(output), objectFile("object.o"), dumpKind(dump) {
   addDefaultTypes();
   addDefaultFunctionTypes();

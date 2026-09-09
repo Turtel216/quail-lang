@@ -601,6 +601,7 @@ public:
   /* Mutually recursive members, in dependency order. */
   std::vector<std::unique_ptr<ff::sem::Group>> groups;
 
+  void insertDataTypes(std::shared_ptr<ff::sem::TypeContext> &typeCtx);
   void findFree(ff::sem::TypeManager &mgr,
                 std::shared_ptr<ff::sem::TypeContext> &typeCtx,
                 ff::sem::Visibility visibility, std::set<std::string> &into);

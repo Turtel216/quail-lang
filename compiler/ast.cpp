@@ -818,6 +818,7 @@ void AstLet::findFree(ff::sem::TypeManager &mgr,
                       std::set<std::string> &into) {
   this->typeContext = ff::sem::typeScope(typeCtx);
 
+  definitions->insertDataTypes(this->typeContext);
   definitions->findFree(mgr, this->typeContext, ff::sem::Visibility::Local,
                         into);
 
@@ -1163,18 +1164,26 @@ const DefinitionDefn *findDuplicateMethod(
 
 // ############ Groups ############
 
-void DefinitionGroup::findFree(ff::sem::TypeManager &mgr,
-                               std::shared_ptr<ff::sem::TypeContext> &typeCtx,
-                               ff::sem::Visibility visibility,
-                               std::set<std::string> &into) {
-  this->typeContext = typeCtx;
-
+/* Bind what the group's data declarations name, ahead of anything that could
+ * mention them. Kept apart from findFree because the class environment is
+ * built between the two: an instance head names a type, and so needs the
+ * types to be in scope, but nothing about it depends on inference having
+ * started. */
+void DefinitionGroup::insertDataTypes(
+    std::shared_ptr<ff::sem::TypeContext> &typeCtx) {
   for (auto &defData : defsData) {
     defData.second->insertTypes(typeCtx);
   }
   for (auto &defData : defsData) {
     defData.second->insertConstructors();
   }
+}
+
+void DefinitionGroup::findFree(ff::sem::TypeManager &mgr,
+                               std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                               ff::sem::Visibility visibility,
+                               std::set<std::string> &into) {
+  this->typeContext = typeCtx;
 
   ff::sem::FunctionGraph dependencyGraph;
 
