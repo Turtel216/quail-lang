@@ -76,6 +76,7 @@ set(SRC_FILES
     compiler/parse_driver.cpp
     compiler/file_manager.cpp
     compiler/graph_function.cpp
+    compiler/classes.cpp
     compiler/compiler.cpp
     compiler/mangler.cpp
 )
