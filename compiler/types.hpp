@@ -138,6 +138,34 @@ public:
   inline int getLastId() const noexcept { return this->lastId; }
 };
 
+/* One class constraint: the class a type is claimed to be an instance of.
+ *
+ * The type is held rather than the name of a variable, because a wanted
+ * constraint is about whatever inference has arrived at, which may be a
+ * variable, an applied constructor or a function. Comparing two of these
+ * therefore goes through the same resolution that unification does. */
+class Pred {
+public:
+  std::string className;
+  std::shared_ptr<Type> type;
+
+  Pred(std::string c, std::shared_ptr<Type> t)
+      : className(std::move(c)), type(std::move(t)) {}
+
+  void print(const TypeManager &mgr, std::ostream &to) const;
+};
+
+/* A payload under the constraints it holds only under. The payload is a type
+ * for a qualified type, and a predicate for an instance declaration: reading
+ * `[Eq a] => Eq (List a)` as "lists of a are equatable whenever a is". */
+template <typename T> class Qual {
+public:
+  std::vector<Pred> preds;
+  T head;
+
+  Qual(std::vector<Pred> p, T h) : preds(std::move(p)), head(std::move(h)) {}
+};
+
 class TypeScheme {
 public:
   std::vector<std::string> forall;

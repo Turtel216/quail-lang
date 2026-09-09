@@ -167,6 +167,11 @@ void TypeScheme::print(const TypeManager &mgr, std::ostream &to) const {
   monotype->print(mgr, to);
 }
 
+void Pred::print(const TypeManager &mgr, std::ostream &to) const {
+  to << this->className << " ";
+  this->type->print(mgr, to);
+}
+
 void TypeVar::print(const TypeManager &mgr, std::ostream &to) const {
   auto it = mgr.types.find(this->name);
   if (it != mgr.types.end()) {
