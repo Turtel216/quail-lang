@@ -5,6 +5,7 @@
 #include <location.hh>
 #include <map>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
@@ -83,6 +84,7 @@ private:
   /* Which class owns each method name. Two classes cannot share one: a use
    * of a method names the method, and would not say which class was meant. */
   std::map<std::string, std::string> methodOwners;
+  std::vector<std::shared_ptr<Type>> defaults;
 
   ClassInfo *findMutable(const std::string &name);
 
@@ -99,12 +101,80 @@ public:
   /* Build and validate the environment. Throws the first mistake it finds. */
   void build(const DefinitionGroup &group, const TypeContext &typeCtx);
 
+  /* Bind every method as a global, under the qualified scheme its class
+   * gives it. A method is reached by name like any other function; what
+   * makes it a method is the constraint its scheme carries. */
+  void bindMethods(TypeContext &typeCtx) const;
+
+  inline bool isEmpty() const noexcept { return this->classes.empty(); }
+
   const ClassInfo *lookup(const std::string &name) const;
   /* The class a method belongs to, or null when no class declares it. */
   const std::string *methodOwner(const std::string &methodName) const;
 
   void print(std::ostream &to) const;
+
+  /* -- Entailment -------------------------------------------------------- */
+
+  /* A constraint together with everything it already implies, which is what
+   * each of its superclasses says about the same type, transitively. Holding
+   * `Ord a` is holding `Eq a`, and the dictionary for the first carries the
+   * dictionary for the second, so nothing has to be solved again. */
+  std::vector<Pred> bySuper(TypeManager &mgr, const Pred &pred) const;
+
+  /* The context of the one instance whose head matches `pred`, or nothing
+   * when no instance does. Matching is one way: the instance head's
+   * variables are what may stand for something, the constraint's are not. */
+  std::optional<std::vector<Pred>> byInst(TypeManager &mgr,
+                                          const Pred &pred) const;
+
+  /* Whether `given` already answers for `wanted`, by a superclass of
+   * something held or by an instance whose own context is likewise answered
+   * for. */
+  bool entail(TypeManager &mgr, const std::vector<Pred> &given,
+              const Pred &wanted) const;
+
+  /* Reduce a constraint to ones about type variables alone, by replacing
+   * anything constructor headed with the context of the instance that
+   * answers it. Throws when nothing does. */
+  std::vector<Pred> toHnf(TypeManager &mgr, const Pred &pred,
+                          const yy::location &loc) const;
+
+  /* Drop every constraint the others already answer for. Each keeps the
+   * place it came from, so what is left can still be reported against the
+   * code that wanted it. */
+  std::vector<Wanted> simplify(TypeManager &mgr,
+                               std::vector<Wanted> wanted) const;
+
+  /* toHnf over every wanted constraint, then simplify what comes back.
+   * Anything `given` already answers for is dropped before reduction, since
+   * a constraint that is held needs no instance to justify it. */
+  std::vector<Wanted> reduce(TypeManager &mgr, std::vector<Wanted> wanted,
+                             const std::vector<Pred> &given = {}) const;
+
+  /* -- Defaulting -------------------------------------------------------- */
+
+  /* The types an ambiguous variable may be settled to, in the order they are
+   * tried. Set once, before inference. */
+  void setDefaults(std::vector<std::shared_ptr<Type>> types);
+
+  /* Try to settle `var` by the defaulting rules: every constraint on it must
+   * be about it and nothing else, at least one must be the numeric class,
+   * and a candidate must satisfy them all. Binds the variable and answers
+   * true when one does. */
+  bool defaultVariable(TypeManager &mgr, const std::string &var,
+                       const std::vector<Pred> &preds) const;
+
+  /* Every instance the environment holds, whatever class it belongs to. */
+  std::vector<const InstanceInfo *> allInstances() const;
 };
+
+/* Whether two constraints say the same thing about the same type. */
+bool samePred(TypeManager &mgr, const Pred &left, const Pred &right);
+
+/* Whether a constraint is about a type variable and nothing more, which is
+ * as far as reduction can take it. */
+bool inHnf(TypeManager &mgr, const Pred &pred);
 
 } // namespace sem
 } // namespace ff

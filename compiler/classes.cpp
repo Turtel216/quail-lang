@@ -3,6 +3,7 @@
 #include "ast.hpp"
 #include "error.hpp"
 #include <cassert>
+#include <map>
 #include <set>
 #include <sstream>
 
@@ -510,6 +511,21 @@ void ClassEnv::build(const DefinitionGroup &group, const TypeContext &typeCtx) {
   checkInstanceMethods();
 }
 
+void ClassEnv::bindMethods(TypeContext &typeCtx) const {
+  for (auto &pair : classes) {
+    auto &info = *pair.second;
+
+    for (auto &method : info.methods) {
+      std::shared_ptr<TypeScheme> scheme(new TypeScheme(method.type));
+      scheme->forall = method.forall;
+      scheme->context.push_back(
+          Pred(info.name, std::shared_ptr<Type>(new TypeVar(info.var))));
+
+      typeCtx.bind(method.name, std::move(scheme), Visibility::Global);
+    }
+  }
+}
+
 void ClassEnv::print(std::ostream &to) const {
   for (auto &pair : classes) {
     auto &info = *pair.second;
@@ -532,6 +548,290 @@ void ClassEnv::print(std::ostream &to) const {
       to << std::endl;
     }
   }
+}
+
+// ############ Entailment ############
+
+namespace {
+
+/* Whether two types are the same type, following what unification has
+ * already settled. This never binds anything: two constraints either say the
+ * same thing about what is known so far, or they do not. */
+bool sameType(TypeManager &mgr, const std::shared_ptr<Type> &left,
+              const std::shared_ptr<Type> &right) {
+  TypeVar *leftVar;
+  TypeVar *rightVar;
+  auto l = mgr.resolve(left, leftVar);
+  auto r = mgr.resolve(right, rightVar);
+
+  if (leftVar || rightVar)
+    return leftVar && rightVar && leftVar->getName() == rightVar->getName();
+
+  auto *leftArr = dynamic_cast<TypeArr *>(l.get());
+  auto *rightArr = dynamic_cast<TypeArr *>(r.get());
+  if (leftArr || rightArr)
+    return leftArr && rightArr &&
+           sameType(mgr, leftArr->getLeft(), rightArr->getLeft()) &&
+           sameType(mgr, leftArr->getRight(), rightArr->getRight());
+
+  auto *leftApp = dynamic_cast<TypeApp *>(l.get());
+  auto *rightApp = dynamic_cast<TypeApp *>(r.get());
+  if (leftApp && rightApp) {
+    if (leftApp->arguments.size() != rightApp->arguments.size() ||
+        !sameType(mgr, leftApp->constructor, rightApp->constructor))
+      return false;
+
+    for (std::size_t i = 0; i < leftApp->arguments.size(); i++) {
+      if (!sameType(mgr, leftApp->arguments[i], rightApp->arguments[i]))
+        return false;
+    }
+    return true;
+  }
+
+  auto *leftBase = dynamic_cast<TypeBase *>(l.get());
+  auto *rightBase = dynamic_cast<TypeBase *>(r.get());
+  return leftBase && rightBase && leftBase->getName() == rightBase->getName() &&
+         leftBase->getArity() == rightBase->getArity();
+}
+
+/* Match an instance head against a constraint's type. Only the head's
+ * variables may stand for something; a variable in the constraint is a type
+ * the caller has not pinned down, and an instance does not get to pin it
+ * down on their behalf.
+ *
+ * `subst` accumulates what the head's variables were taken to be. It is
+ * local: nothing here touches the substitution unification works in. */
+bool matchType(TypeManager &mgr, const std::shared_ptr<Type> &pattern,
+               const std::shared_ptr<Type> &target,
+               std::map<std::string, std::shared_ptr<Type>> &subst) {
+  if (auto *var = dynamic_cast<TypeVar *>(pattern.get())) {
+    auto it = subst.find(var->getName());
+    if (it != subst.end())
+      return sameType(mgr, it->second, target);
+
+    subst[var->getName()] = target;
+    return true;
+  }
+
+  TypeVar *targetVar;
+  auto resolved = mgr.resolve(target, targetVar);
+  /* The constraint is still about an open type, so nothing constructor
+   * headed can be said to match it yet. */
+  if (targetVar)
+    return false;
+
+  if (auto *arr = dynamic_cast<TypeArr *>(pattern.get())) {
+    auto *targetArr = dynamic_cast<TypeArr *>(resolved.get());
+    return targetArr &&
+           matchType(mgr, arr->getLeft(), targetArr->getLeft(), subst) &&
+           matchType(mgr, arr->getRight(), targetArr->getRight(), subst);
+  }
+
+  if (auto *app = dynamic_cast<TypeApp *>(pattern.get())) {
+    auto *targetApp = dynamic_cast<TypeApp *>(resolved.get());
+    if (!targetApp || app->arguments.size() != targetApp->arguments.size() ||
+        !sameType(mgr, app->constructor, targetApp->constructor))
+      return false;
+
+    for (std::size_t i = 0; i < app->arguments.size(); i++) {
+      if (!matchType(mgr, app->arguments[i], targetApp->arguments[i], subst))
+        return false;
+    }
+    return true;
+  }
+
+  return sameType(mgr, pattern, resolved);
+}
+
+} // namespace
+
+bool samePred(TypeManager &mgr, const Pred &left, const Pred &right) {
+  return left.className == right.className &&
+         sameType(mgr, left.type, right.type);
+}
+
+bool inHnf(TypeManager &mgr, const Pred &pred) {
+  TypeVar *var;
+  mgr.resolve(pred.type, var);
+  return var != nullptr;
+}
+
+std::vector<Pred> ClassEnv::bySuper(TypeManager &mgr, const Pred &pred) const {
+  std::vector<Pred> preds{pred};
+
+  auto *info = lookup(pred.className);
+  if (!info)
+    return preds;
+
+  for (auto &super : info->supers) {
+    /* A superclass is recorded as constraining the class variable, so it is
+     * about whatever this constraint is about. */
+    for (auto &implied : bySuper(mgr, Pred(super.className, pred.type)))
+      preds.push_back(std::move(implied));
+  }
+
+  return preds;
+}
+
+std::optional<std::vector<Pred>> ClassEnv::byInst(TypeManager &mgr,
+                                                  const Pred &pred) const {
+  auto *info = lookup(pred.className);
+  if (!info)
+    return std::nullopt;
+
+  for (auto &instance : info->instances) {
+    std::map<std::string, std::shared_ptr<Type>> subst;
+    if (!matchType(mgr, instance.qual.head.type, pred.type, subst))
+      continue;
+
+    /* Paterson's conditions leave every context variable standing somewhere
+     * in the head, so the match has settled all of them. */
+    std::vector<Pred> context;
+    for (auto &contextPred : instance.qual.preds) {
+      context.push_back(Pred(contextPred.className,
+                             mgr.substitute(subst, contextPred.type)));
+    }
+    return context;
+  }
+
+  return std::nullopt;
+}
+
+bool ClassEnv::entail(TypeManager &mgr, const std::vector<Pred> &given,
+                      const Pred &wanted) const {
+  for (auto &held : given) {
+    for (auto &implied : bySuper(mgr, held)) {
+      if (samePred(mgr, implied, wanted))
+        return true;
+    }
+  }
+
+  auto context = byInst(mgr, wanted);
+  if (!context)
+    return false;
+
+  for (auto &pred : *context) {
+    if (!entail(mgr, given, pred))
+      return false;
+  }
+  return true;
+}
+
+std::vector<Pred> ClassEnv::toHnf(TypeManager &mgr, const Pred &pred,
+                                  const yy::location &loc) const {
+  if (inHnf(mgr, pred))
+    return {pred};
+
+  auto context = byInst(mgr, pred);
+  if (!context) {
+    TypeNamer namer;
+    std::ostringstream stream;
+    stream << "no instance for ";
+    printReadable(mgr, pred, namer, stream);
+    throw ff::TypeError(stream.str(), loc);
+  }
+
+  std::vector<Pred> reduced;
+  for (auto &contextPred : *context) {
+    for (auto &deeper : toHnf(mgr, contextPred, loc))
+      reduced.push_back(std::move(deeper));
+  }
+  return reduced;
+}
+
+std::vector<Wanted> ClassEnv::simplify(TypeManager &mgr,
+                                       std::vector<Wanted> wanted) const {
+  std::vector<Wanted> kept;
+
+  for (std::size_t i = 0; i < wanted.size(); i++) {
+    /* Everything already kept, and everything still to come: a constraint is
+     * dropped when the rest of the set answers for it on its own. */
+    std::vector<Pred> rest;
+    for (auto &one : kept)
+      rest.push_back(one.pred);
+    for (std::size_t j = i + 1; j < wanted.size(); j++)
+      rest.push_back(wanted[j].pred);
+
+    if (!entail(mgr, rest, wanted[i].pred))
+      kept.push_back(wanted[i]);
+  }
+
+  return kept;
+}
+
+std::vector<Wanted> ClassEnv::reduce(TypeManager &mgr,
+                                     std::vector<Wanted> wanted,
+                                     const std::vector<Pred> &given) const {
+  std::vector<Wanted> reduced;
+  for (auto &one : wanted) {
+    /* Asked before reduction, because what is held may be a constraint that
+     * no instance could have justified on its own. */
+    if (entail(mgr, given, one.pred))
+      continue;
+
+    for (auto &pred : toHnf(mgr, one.pred, one.loc))
+      reduced.push_back(Wanted(std::move(pred), one.loc));
+  }
+
+  return simplify(mgr, std::move(reduced));
+}
+
+void ClassEnv::setDefaults(std::vector<std::shared_ptr<Type>> types) {
+  this->defaults = std::move(types);
+}
+
+/* The defaulting rules of the Haskell report, section 4.3.4, with the one
+ * numeric class this language has. A variable is only settled when every
+ * constraint on it is about it alone, so that choosing a type for it cannot
+ * change what any other constraint means. */
+bool ClassEnv::defaultVariable(TypeManager &mgr, const std::string &var,
+                               const std::vector<Pred> &preds) const {
+  std::vector<Pred> about;
+  bool numeric = false;
+
+  for (auto &pred : preds) {
+    std::set<std::string> vars;
+    mgr.findFree(pred.type, vars);
+    if (vars.find(var) == vars.end())
+      continue;
+
+    TypeVar *predVar;
+    mgr.resolve(pred.type, predVar);
+    if (!predVar || predVar->getName() != var)
+      return false;
+
+    numeric |= pred.className == numClassName;
+    about.push_back(pred);
+  }
+
+  if (!numeric)
+    return false;
+
+  for (auto &candidate : defaults) {
+    bool satisfied = true;
+    for (auto &pred : about) {
+      if (!entail(mgr, {}, Pred(pred.className, candidate))) {
+        satisfied = false;
+        break;
+      }
+    }
+
+    if (satisfied) {
+      mgr.bind(var, candidate);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+std::vector<const InstanceInfo *> ClassEnv::allInstances() const {
+  std::vector<const InstanceInfo *> found;
+  for (auto &pair : classes) {
+    for (auto &instance : pair.second->instances)
+      found.push_back(&instance);
+  }
+  return found;
 }
 
 } // namespace sem
