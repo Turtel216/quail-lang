@@ -44,6 +44,9 @@ private:
         void parse();
         void dump();
         void buildClassEnv();
+        void typecheckInstances();
+        void resolveRemaining();
+        void printTypes() const;
         void typecheck();
         void translate();
         void compileDefinition(DefinitionDefn &definition);

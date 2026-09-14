@@ -1,5 +1,6 @@
 #include "ast.hpp"
 
+#include "classes.hpp"
 #include "context.hpp"
 #include "enviroment.hpp"
 #include "error.hpp"
@@ -52,6 +53,8 @@ SignatureVars signatureVars(ff::sem::TypeManager &mgr,
   }
   if (definition.returnAnnotation)
     definition.returnAnnotation->collectVariables(vars.written);
+  for (auto &pred : definition.context)
+    pred->collectVariables(vars.written);
 
   for (auto &name : vars.written)
     vars.fresh[name] = mgr.newType();
@@ -114,6 +117,49 @@ resolveComposed(ff::sem::TypeManager &mgr, const char *side, const Ast &operand,
   resolved->print(mgr, errorStream);
 
   throw ff::TypeError(errorStream.str(), operand.loc);
+}
+
+/* An ambiguous variable is reported with what constrains it, since the
+ * constraint is what the reader has to remove or pin down. */
+std::string ambiguityMessage(ff::sem::TypeManager &mgr, const std::string &var,
+                             const std::vector<ff::sem::Wanted> &retained) {
+  ff::sem::TypeNamer namer;
+  std::ostringstream errorStream;
+
+  errorStream << "the type variable " << namer.nameOf(var)
+              << " is ambiguous: nothing that uses this can say what it is, "
+                 "and it is constrained by";
+
+  for (auto &one : retained) {
+    std::set<std::string> predVars;
+    mgr.findFree(one.pred.type, predVars);
+    if (predVars.find(var) == predVars.end())
+      continue;
+
+    errorStream << " ";
+    ff::sem::printReadable(mgr, one.pred, namer, errorStream);
+  }
+
+  return errorStream.str();
+}
+
+std::string notEntailedMessage(ff::sem::TypeManager &mgr,
+                               const ff::sem::Pred &pred,
+                               const std::vector<ff::sem::Pred> &declared) {
+  ff::sem::TypeNamer namer;
+  std::ostringstream errorStream;
+
+  errorStream << "the body needs ";
+  ff::sem::printReadable(mgr, pred, namer, errorStream);
+  errorStream << ", which the declared context";
+
+  for (auto &one : declared) {
+    errorStream << " ";
+    ff::sem::printReadable(mgr, one, namer, errorStream);
+  }
+  errorStream << " does not provide";
+
+  return errorStream.str();
 }
 
 /* What the right side hands back must be what the left side takes. Both
@@ -185,7 +231,7 @@ std::shared_ptr<ff::sem::Type> AstLid::typecheck(ff::sem::TypeManager &mgr) {
   auto variable = typeContext->lookup(id);
   /* Undefined names are reported before typechecking begins. */
   assert(variable != nullptr);
-  return variable->scheme->instantiate(mgr);
+  return variable->scheme->instantiate(mgr, loc);
 }
 
 void AstLid::translate(GlobalScope &) {}
@@ -217,7 +263,7 @@ std::shared_ptr<ff::sem::Type> AstUid::typecheck(ff::sem::TypeManager &mgr) {
   auto constructor = typeContext->lookup(id);
   if (!constructor)
     throw ff::TypeError("unknown constructor " + id, loc);
-  return constructor->scheme->instantiate(mgr);
+  return constructor->scheme->instantiate(mgr, loc);
 }
 
 void AstUid::findFree(ff::sem::TypeManager &,
@@ -305,7 +351,7 @@ std::shared_ptr<ff::sem::Type> AstBinop::typecheck(ff::sem::TypeManager &mgr) {
     throw ff::TypeError(std::string("unknown binary operator ") + opName(op),
                         loc);
 
-  auto ftype = opVariable->scheme->instantiate(mgr);
+  auto ftype = opVariable->scheme->instantiate(mgr, loc);
 
   /* Every operator takes two operands of a type it fixes itself, so the
    * types it expects can be read straight off it and blamed one at a time. */
@@ -478,7 +524,7 @@ AstCompose::typecheck(ff::sem::TypeManager &mgr) {
   /* The compiler binds the composition operator before anything is read. */
   assert(composeVariable != nullptr);
 
-  auto composeType = composeVariable->scheme->instantiate(mgr);
+  auto composeType = composeVariable->scheme->instantiate(mgr, loc);
 
   auto returnType = mgr.newType();
   auto arrowOne = std::shared_ptr<ff::sem::Type>(
@@ -900,7 +946,7 @@ void PatternVar::eraseBindings(std::set<std::string> &from) const {
 void PatternVar::typecheck(
     std::shared_ptr<ff::sem::Type> t, ff::sem::TypeManager &mgr,
     std::shared_ptr<ff::sem::TypeContext> &typeCtx) const {
-  mgr.unify(typeCtx->lookup(var)->scheme->instantiate(mgr), t, loc);
+  mgr.unify(typeCtx->lookup(var)->scheme->instantiate(mgr, loc), t, loc);
 }
 
 void PatternConstr::typecheck(
@@ -912,7 +958,7 @@ void PatternConstr::typecheck(
         std::string("pattern using unknown constructor ") + constr, loc);
   }
 
-  auto constructorType = constructor->scheme->instantiate(mgr);
+  auto constructorType = constructor->scheme->instantiate(mgr, loc);
   for (auto &param : params) {
     ff::sem::TypeArr *arr =
         dynamic_cast<ff::sem::TypeArr *>(constructorType.get());
@@ -920,7 +966,7 @@ void PatternConstr::typecheck(
     if (!arr)
       throw ff::TypeError("too many parameters in constructor pattern", loc);
 
-    mgr.unify(typeCtx->lookup(param)->scheme->instantiate(mgr), arr->getLeft(),
+    mgr.unify(typeCtx->lookup(param)->scheme->instantiate(mgr, loc), arr->getLeft(),
               loc);
     constructorType = arr->getRight();
   }
@@ -986,6 +1032,27 @@ void DefinitionDefn::findFree(ff::sem::TypeManager &mgr,
     varContext->bind(param.name, paramType);
   }
 
+  for (auto &pred : context) {
+    const ff::sem::ClassEnv *classEnv = mgr.getClassEnv();
+    /* Inference never runs before the class environment is built. */
+    assert(classEnv != nullptr);
+
+    if (!classEnv->lookup(pred->className))
+      throw ff::TypeError("unknown class " + pred->className +
+                              " in the context of " + name,
+                          pred->loc);
+
+    if (pred->arguments.size() != 1)
+      throw ff::TypeError("the constraint on " + name + " applies " +
+                              pred->className + " to more than one type",
+                          pred->loc);
+
+    declaredContext.push_back(ff::sem::Pred(
+        pred->className,
+        resolveAnnotation(mgr, *pred->arguments.front(), signature, *typeCtx,
+                          pred->loc)));
+  }
+
   body->findFree(mgr, varContext, freeVariables);
   for (auto &param : params) {
     freeVariables.erase(param->name);
@@ -999,20 +1066,22 @@ void DefinitionDefn::insertTypes(ff::sem::TypeManager &) {
 void DefinitionDefn::typecheck(ff::sem::TypeManager &mgr) {
   auto bodyType = body->typecheck(mgr);
 
-  if (!returnAnnotation) {
-    mgr.unify(returnType, bodyType, body->loc);
-    return;
-  }
+  if (returnAnnotation && returnDescription.empty())
+    returnDescription =
+        "the body of " + name + " does not have its declared return type";
 
-  /* A declared return type is what the definition committed to, so the two
-   * whole types are worth showing rather than whichever pair of pieces deep
-   * inside them happened not to fit. */
+  /* When the result was fixed by something other than the body -- a return
+   * type the definition declared, or the class an instance method belongs to
+   * -- the two whole types are worth showing rather than whichever pair of
+   * pieces deep inside them happened not to fit. */
   try {
     mgr.unify(returnType, bodyType, body->loc);
   } catch (const ff::UnificationError &) {
+    if (returnDescription.empty())
+      throw;
+
     throw ff::UnificationError(returnType, bodyType, body->loc,
-                               "the body of " + name +
-                                   " does not have its declared return type");
+                               returnDescription);
   }
 }
 
@@ -1208,6 +1277,11 @@ void DefinitionGroup::findFree(ff::sem::TypeManager &mgr,
 void DefinitionGroup::typecheck(ff::sem::TypeManager &mgr) {
   for (auto it = groups.rbegin(); it != groups.rend(); it++) {
     auto &group = *it;
+
+    /* Everything wanted from here on belongs to this group, and is answered
+     * for once its bodies have been checked. */
+    std::size_t mark = mgr.wantedMark();
+
     for (auto &defDefnName : group->members) {
       defsDefn.find(defDefnName)->second->insertTypes(mgr);
     }
@@ -1216,10 +1290,159 @@ void DefinitionGroup::typecheck(ff::sem::TypeManager &mgr) {
       defsDefn.find(defDefnName)->second->typecheck(mgr);
     }
 
-    for (auto &defDefnName : group->members) {
-      typeContext->generalize(defDefnName, group->members, mgr);
+    generalizeGroup(mgr, *group, mark);
+  }
+}
+
+void DefinitionGroup::generalizeGroup(ff::sem::TypeManager &mgr,
+                                      const ff::sem::Group &group,
+                                      std::size_t mark) {
+  const ff::sem::ClassEnv *classEnv = mgr.getClassEnv();
+  /* Inference never runs before the class environment is built. */
+  assert(classEnv != nullptr);
+
+  /* A context the program wrote is what the definition promised, and is
+   * checked against what its body turned out to need. Only a definition that
+   * stands on its own may write one: the members of a group are inferred
+   * together, so a context on one of them would be a claim about all. */
+  std::vector<ff::sem::Pred> declared;
+  bool anyDeclared = false;
+  for (auto &name : group.members) {
+    auto &definition = *defsDefn.find(name)->second;
+    if (definition.declaredContext.empty())
+      continue;
+
+    anyDeclared = true;
+    if (group.members.size() > 1)
+      throw ff::TypeError(
+          "the definition " + name +
+              " writes a context, but is mutually recursive with another "
+              "definition; leave the context off and it will be inferred",
+          definition.loc);
+
+    declared.insert(declared.end(), definition.declaredContext.begin(),
+                    definition.declaredContext.end());
+  }
+
+  auto wanted = classEnv->reduce(mgr, mgr.takeWantedFrom(mark), declared);
+
+  /* Type variables the scope around the group already talks about. One of
+   * those is not this group's to quantify, and a constraint about nothing
+   * else is not this group's to answer for either. */
+  std::set<std::string> envVars;
+  typeContext->findFree(mgr, group.members, envVars);
+
+  std::set<std::string> groupVars;
+  for (auto &name : group.members)
+    mgr.findFree(typeContext->lookup(name)->scheme->monotype, groupVars);
+
+  /* Split: a constraint about nothing the group is free to choose belongs to
+   * the scope around it, and the rest is what the group holds under. */
+  std::vector<ff::sem::Wanted> deferred;
+  std::vector<ff::sem::Wanted> retained;
+  for (auto &one : wanted) {
+    std::set<std::string> predVars;
+    mgr.findFree(one.pred.type, predVars);
+
+    bool allFixed = true;
+    for (auto &var : predVars) {
+      if (envVars.find(var) == envVars.end()) {
+        allFixed = false;
+        break;
+      }
+    }
+
+    (allFixed ? deferred : retained).push_back(one);
+  }
+
+  /* The monomorphism restriction. A definition that takes no arguments and
+   * promises nothing is a value, not a function, and a value is computed
+   * once: generalizing what constrains it would have it computed afresh, at
+   * a different type, at every use. Its constrained variables are therefore
+   * left alone to be settled by defaulting or by whatever uses it. */
+  std::set<std::string> notQuantified = envVars;
+  for (auto &name : group.members) {
+    auto &definition = *defsDefn.find(name)->second;
+    if (!definition.params.empty() || !definition.declaredContext.empty())
+      continue;
+
+    for (auto &one : retained)
+      mgr.findFree(one.pred.type, notQuantified);
+    deferred.insert(deferred.end(), retained.begin(), retained.end());
+    retained.clear();
+    break;
+  }
+
+  /* A constraint about a variable none of the group's types mention can
+   * never be settled by a caller, since a caller has nothing to settle it
+   * with. Defaulting is the one way out. */
+  std::set<std::string> ambiguous;
+  for (auto &one : retained) {
+    std::set<std::string> predVars;
+    mgr.findFree(one.pred.type, predVars);
+    for (auto &var : predVars) {
+      if (groupVars.find(var) == groupVars.end())
+        ambiguous.insert(var);
     }
   }
+
+  if (!ambiguous.empty()) {
+    std::vector<ff::sem::Pred> preds;
+    for (auto &one : retained)
+      preds.push_back(one.pred);
+
+    for (auto &var : ambiguous) {
+      if (classEnv->defaultVariable(mgr, var, preds))
+        continue;
+
+      throw ff::TypeError(ambiguityMessage(mgr, var, retained),
+                          retained.front().loc);
+    }
+
+    /* Defaulting settled some variables, so the constraints about them are
+     * about a known type now and reduce away. */
+    retained = classEnv->reduce(mgr, std::move(retained));
+  }
+
+  if (anyDeclared) {
+    for (auto &one : retained) {
+      if (classEnv->entail(mgr, declared, one.pred))
+        continue;
+
+      throw ff::TypeError(notEntailedMessage(mgr, one.pred, declared), one.loc);
+    }
+  }
+
+  std::vector<ff::sem::Pred> schemeContext;
+  if (anyDeclared) {
+    schemeContext = declared;
+  } else {
+    for (auto &one : retained)
+      schemeContext.push_back(one.pred);
+  }
+
+  for (auto &name : group.members) {
+    auto &scheme = *typeContext->lookup(name)->scheme;
+    /* A binding is only ever reached once by its own group. */
+    assert(scheme.forall.empty() && scheme.context.empty());
+
+    scheme.context = schemeContext;
+
+    std::set<std::string> ownVars;
+    mgr.findFree(scheme.monotype, ownVars);
+    for (auto &pred : schemeContext)
+      mgr.findFree(pred.type, ownVars);
+
+    for (auto &var : ownVars) {
+      if (notQuantified.find(var) == notQuantified.end())
+        scheme.forall.push_back(var);
+    }
+  }
+
+  /* Whatever the group could not answer for is handed outward, to the scope
+   * that knows what its variables are. */
+  for (auto &one : deferred)
+    mgr.want(one.pred, one.loc);
 }
 
 void DefinitionGroup::translate(GlobalScope &scope) {

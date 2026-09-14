@@ -206,6 +206,7 @@ void Compiler::dump() {
     buildClassEnv();
     classEnv.print(std::cout);
     break;
+  case DumpKind::Types:
   case DumpKind::None:
     break;
   }
@@ -213,6 +214,16 @@ void Compiler::dump() {
 
 void Compiler::typecheck() {
   buildClassEnv();
+
+  manager.setClassEnv(classEnv);
+
+  /* The one type an ambiguous numeric variable may be settled to. */
+  std::vector<std::shared_ptr<sem::Type>> defaults;
+  defaults.push_back(std::shared_ptr<sem::Type>(
+      new sem::TypeApp(globalContext->lookupType("Int"))));
+  classEnv.setDefaults(std::move(defaults));
+
+  classEnv.bindMethods(*globalContext);
 
   std::set<std::string> freeVariables;
   globalDefs.findFree(manager, globalContext, ff::sem::Visibility::Global,
@@ -230,15 +241,142 @@ void Compiler::typecheck() {
   }
 
   globalDefs.typecheck(manager);
+  typecheckInstances();
+  resolveRemaining();
+}
 
+/* Check what each instance provides against what its class asked for.
+ *
+ * This runs after every top level group, and can: an instance method is
+ * reached through a dictionary rather than by name, so nothing at the top
+ * level has a type that depends on one, while the method itself is free to
+ * call anything the program defines. */
+void Compiler::typecheckInstances() {
+  for (const sem::InstanceInfo *instance : classEnv.allInstances()) {
+    const sem::ClassInfo *info = classEnv.lookup(instance->qual.head.className);
+    /* An instance is only recorded under a class that exists. */
+    assert(info != nullptr);
+
+    /* The instance's variables stand for whatever a use of it turns out to
+     * be about, so each instance is checked with its own. */
+    std::map<std::string, std::shared_ptr<sem::Type>> subst;
+    for (auto &var : instance->forall)
+      subst[var] = manager.newType();
+
+    auto headType = manager.substitute(subst, instance->qual.head.type);
+
+    /* What the instance was allowed to assume. */
+    std::vector<sem::Pred> given;
+    for (auto &pred : instance->qual.preds)
+      given.push_back(
+          sem::Pred(pred.className, manager.substitute(subst, pred.type)));
+
+    for (auto &method : instance->declaration->methods) {
+      const sem::MethodInfo *methodInfo = info->lookupMethod(method->name);
+      /* Every method of an instance was checked to belong to its class. */
+      assert(methodInfo != nullptr);
+
+      /* The class signature with the instance head standing where the class
+       * variable stood, and whatever else the method quantifies over given
+       * variables of its own. */
+      auto methodSubst = subst;
+      methodSubst[info->var] = headType;
+      for (auto &var : methodInfo->forall) {
+        if (methodSubst.find(var) == methodSubst.end())
+          methodSubst[var] = manager.newType();
+      }
+      auto expected = manager.substitute(methodSubst, methodInfo->type);
+
+      std::size_t mark = manager.wantedMark();
+
+      method->returnDescription = "the method " + method->name +
+                                  " does not have the type " + info->name +
+                                  " declares for it";
+
+      method->findFree(manager, globalContext);
+      for (auto &free : method->freeVariables) {
+        if (globalContext->lookup(free) == nullptr)
+          throw ff::TypeError("undefined variable " + free, method->loc);
+      }
+
+      /* Pinned down before the body is looked at, so that a body that does
+       * not fit is reported against the part of it that does not. The two
+       * whole types are worth showing here, since what the method has to be
+       * is not written anywhere near it. */
+      try {
+        manager.unify(method->fullType, expected, method->loc);
+      } catch (const ff::UnificationError &) {
+        throw ff::UnificationError(expected, method->fullType, method->loc,
+                                   method->returnDescription);
+      }
+      method->typecheck(manager);
+
+      for (auto &one :
+           classEnv.reduce(manager, manager.takeWantedFrom(mark), given)) {
+        if (classEnv.entail(manager, given, one.pred))
+          continue;
+
+        sem::TypeNamer namer;
+        std::ostringstream errorStream;
+        errorStream << "the method " << method->name << " needs ";
+        sem::printReadable(manager, one.pred, namer, errorStream);
+        errorStream << ", which the instance does not hold under";
+
+        throw ff::TypeError(errorStream.str(), one.loc);
+      }
+    }
+  }
+}
+
+/* Constraints that reached the top level unanswered. Nothing encloses it, so
+ * each is settled by defaulting or is a mistake. */
+void Compiler::resolveRemaining() {
+  auto leftover = classEnv.reduce(manager, manager.takeWantedFrom(0));
+  if (leftover.empty())
+    return;
+
+  std::vector<sem::Pred> preds;
+  std::set<std::string> vars;
+  for (auto &one : leftover) {
+    preds.push_back(one.pred);
+    manager.findFree(one.pred.type, vars);
+  }
+
+  for (auto &var : vars)
+    classEnv.defaultVariable(manager, var, preds);
+
+  leftover = classEnv.reduce(manager, std::move(leftover));
+  if (leftover.empty())
+    return;
+
+  sem::TypeNamer namer;
+  std::ostringstream errorStream;
+  errorStream << "nothing settles ";
+  sem::printReadable(manager, leftover.front().pred, namer, errorStream);
+
+  throw ff::TypeError(errorStream.str(), leftover.front().loc);
+}
+
+void Compiler::printTypes() const {
   for (auto &pair : globalContext->getNames()) {
-    std::cout << pair.first << ": ";
-    pair.second->scheme->print(manager, std::cout);
+    std::cout << pair.first << " : ";
+    sem::printReadable(manager, *pair.second->scheme, std::cout);
     std::cout << std::endl;
   }
 }
 
-void Compiler::translate() { globalDefs.translate(globalScope); }
+void Compiler::translate() {
+  /* Dictionary passing is not built yet, so a program that declares a class
+   * typechecks but has nothing to run. Reported here rather than left to
+   * fail as a missing symbol further down. TODO: remove once instances are
+   * lowered. */
+  if (!classEnv.isEmpty())
+    throw ff::CompilerError(
+        "type classes are checked but not yet compiled; a program that "
+        "declares one cannot be built yet");
+
+  globalDefs.translate(globalScope);
+}
 
 void Compiler::compile() {
   for (auto &defDefn : globalDefs.defsDefn) {
@@ -420,13 +558,22 @@ void Compiler::outputLLVM() {
 }
 
 void Compiler::operator()() {
-  if (dumpKind != DumpKind::None) {
+  /* The dumps that only need the program read stop before anything else
+   * happens; the ones that need it checked run the front end first. */
+  if (dumpKind == DumpKind::Ast || dumpKind == DumpKind::Source ||
+      dumpKind == DumpKind::Classes) {
     dump();
     return;
   }
 
   parse();
   typecheck();
+
+  if (dumpKind == DumpKind::Types) {
+    printTypes();
+    return;
+  }
+
   translate();
   compile();
   generateLLVM();

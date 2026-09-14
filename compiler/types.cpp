@@ -144,14 +144,42 @@ void TypeManager::bind(const std::string &s, std::shared_ptr<Type> t) {
   types[s] = t;
 }
 
-std::shared_ptr<Type> TypeScheme::instantiate(TypeManager &mgr) const {
-  if (forall.size() == 0)
+void TypeManager::want(Pred pred, const yy::location &loc) {
+  this->wanted.push_back(Wanted(std::move(pred), loc));
+}
+
+std::size_t TypeManager::wantedMark() const noexcept {
+  return this->wanted.size();
+}
+
+std::vector<Wanted> TypeManager::takeWantedFrom(std::size_t mark) {
+  assert(mark <= this->wanted.size());
+
+  std::vector<Wanted> taken(
+      std::make_move_iterator(this->wanted.begin() + mark),
+      std::make_move_iterator(this->wanted.end()));
+  this->wanted.erase(this->wanted.begin() + mark, this->wanted.end());
+
+  return taken;
+}
+
+std::shared_ptr<Type> TypeScheme::instantiate(TypeManager &mgr,
+                                              const yy::location &loc) const {
+  if (forall.size() == 0) {
+    /* A scheme quantifying nothing still stands for what it holds under: an
+     * instance method is checked with its own instance context in hand. */
+    for (auto &pred : context)
+      mgr.want(pred, loc);
     return monotype;
+  }
 
   std::map<std::string, std::shared_ptr<Type>> subst;
   for (auto &var : forall) {
     subst[var] = mgr.newType();
   }
+
+  for (auto &pred : context)
+    mgr.want(Pred(pred.className, mgr.substitute(subst, pred.type)), loc);
 
   return mgr.substitute(subst, monotype);
 }
@@ -164,7 +192,135 @@ void TypeScheme::print(const TypeManager &mgr, std::ostream &to) const {
     }
     to << ". ";
   }
+  for (auto &pred : context) {
+    pred.print(mgr, to);
+    to << " => ";
+  }
   monotype->print(mgr, to);
+}
+
+const std::string &TypeNamer::nameOf(const std::string &var) {
+  auto it = names.find(var);
+  if (it != names.end())
+    return it->second;
+
+  /* a, b, ... z, then a1, b1, and so on: enough names never to repeat, and
+   * the plain letters for the many types that need only a few. */
+  std::size_t index = names.size();
+  std::string name(1, (char)('a' + (index % 26)));
+  if (index >= 26)
+    name += std::to_string(index / 26);
+
+  return names.emplace(var, std::move(name)).first->second;
+}
+
+namespace {
+
+/* Whether writing `type` where an argument is expected needs parentheses
+ * round it. A name and a variable stand alone; everything else is built out
+ * of more than one piece.
+ *
+ * What a type is has to be read through the substitution: a variable
+ * unification has since settled to a function is a function here. */
+bool needsParens(const TypeManager &mgr, const std::shared_ptr<Type> &type) {
+  TypeVar *var;
+  auto resolved = mgr.resolve(type, var);
+  if (var)
+    return false;
+
+  if (auto *app = dynamic_cast<TypeApp *>(resolved.get()))
+    return !app->arguments.empty();
+  return dynamic_cast<TypeArr *>(resolved.get()) != nullptr;
+}
+
+bool isArrow(const TypeManager &mgr, const std::shared_ptr<Type> &type) {
+  TypeVar *var;
+  auto resolved = mgr.resolve(type, var);
+  return !var && dynamic_cast<TypeArr *>(resolved.get()) != nullptr;
+}
+
+void printReadableArgument(const TypeManager &mgr,
+                           const std::shared_ptr<Type> &type, TypeNamer &namer,
+                           std::ostream &to) {
+  bool parens = needsParens(mgr, type);
+  if (parens)
+    to << "(";
+  printReadable(mgr, type, namer, to);
+  if (parens)
+    to << ")";
+}
+
+} // namespace
+
+void printReadable(const TypeManager &mgr, const std::shared_ptr<Type> &type,
+                   TypeNamer &namer, std::ostream &to) {
+  TypeVar *var;
+  auto resolved = mgr.resolve(type, var);
+
+  if (var) {
+    to << namer.nameOf(var->getName());
+    return;
+  }
+
+  if (auto *arr = dynamic_cast<TypeArr *>(resolved.get())) {
+    /* Arrows group to the right, so only a function on the left of one needs
+     * to be written out with parentheses. */
+    bool parens = isArrow(mgr, arr->getLeft());
+    if (parens)
+      to << "(";
+    printReadable(mgr, arr->getLeft(), namer, to);
+    if (parens)
+      to << ")";
+
+    to << " -> ";
+    printReadable(mgr, arr->getRight(), namer, to);
+    return;
+  }
+
+  if (auto *app = dynamic_cast<TypeApp *>(resolved.get())) {
+    printReadable(mgr, app->constructor, namer, to);
+    for (auto &argument : app->arguments) {
+      to << " ";
+      printReadableArgument(mgr, argument, namer, to);
+    }
+    return;
+  }
+
+  if (auto *base = dynamic_cast<TypeBase *>(resolved.get())) {
+    to << base->getName();
+    return;
+  }
+
+  resolved->print(mgr, to);
+}
+
+void printReadable(const TypeManager &mgr, const Pred &pred, TypeNamer &namer,
+                   std::ostream &to) {
+  to << pred.className << " ";
+  printReadableArgument(mgr, pred.type, namer, to);
+}
+
+void printReadable(const TypeManager &mgr, const TypeScheme &scheme,
+                   std::ostream &to) {
+  TypeNamer namer;
+
+  /* The constraints are named before the type is, so that the variable a
+   * context talks about is the first one the reader meets. */
+  if (!scheme.context.empty()) {
+    bool several = scheme.context.size() > 1;
+    if (several)
+      to << "(";
+    for (auto it = scheme.context.begin(); it != scheme.context.end(); it++) {
+      if (it != scheme.context.begin())
+        to << ", ";
+      printReadable(mgr, *it, namer, to);
+    }
+    if (several)
+      to << ")";
+    to << " => ";
+  }
+
+  printReadable(mgr, scheme.monotype, namer, to);
 }
 
 void Pred::print(const TypeManager &mgr, std::ostream &to) const {

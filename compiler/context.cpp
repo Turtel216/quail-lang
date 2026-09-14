@@ -93,24 +93,5 @@ void TypeContext::findFree(TypeManager &mgr,
     parent->findFree(mgr, except, into);
 }
 
-void TypeContext::generalize(const std::string &name,
-                             const std::set<std::string> &except,
-                             TypeManager &mgr) {
-  auto namesIt = names.find(name);
-  /* Nothing outside of typechecking generalizes, and a binding is only ever
-   * reached once by its own group. */
-  assert(namesIt != names.end());
-  assert(namesIt->second->scheme->forall.size() == 0);
-
-  std::set<std::string> boundVariables;
-  findFree(mgr, except, boundVariables);
-
-  std::set<std::string> freeVariables;
-  mgr.findFree(namesIt->second->scheme->monotype, freeVariables);
-  for (auto &free : freeVariables) {
-    if (boundVariables.find(free) == boundVariables.end())
-      namesIt->second->scheme->forall.push_back(free);
-  }
-}
 } // namespace sem
 } // namespace ff

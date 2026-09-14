@@ -442,11 +442,18 @@ public: // TODO: Fix encapsulation
   /* The constraints the definition wrote to the left of its =>. Empty when
    * it wrote none, which is every definition that predates type classes. */
   ff::sem::ParsedContext context;
+  /* The same constraints once resolved, in terms of the same variables the
+   * rest of the signature was resolved against. */
+  std::vector<ff::sem::Pred> declaredContext;
 
   /* The declared return type, if the program wrote one, and where it wrote
    * it so a bad type can be pointed at rather than described. */
   std::unique_ptr<ff::sem::ParsedType> returnAnnotation;
   yy::location returnAnnotationLoc;
+  /* How to put it when the body does not have the type the definition was
+   * fixed to, for the cases where something other than the body fixed it.
+   * Empty when nothing did, and the mismatch is an ordinary one. */
+  std::string returnDescription;
 
   /* A local definition is reachable only through a stack slot, so anything
    * nested inside it that mentions one must take it as an extra parameter. */
@@ -606,6 +613,11 @@ public:
                 std::shared_ptr<ff::sem::TypeContext> &typeCtx,
                 ff::sem::Visibility visibility, std::set<std::string> &into);
   void typecheck(ff::sem::TypeManager &mgr);
+  /* Solve what one binding group wanted, then quantify its members over
+   * whatever is left. `mark` is where the wanted set stood before the group
+   * was checked. */
+  void generalizeGroup(ff::sem::TypeManager &mgr, const ff::sem::Group &group,
+                       std::size_t mark);
   void translate(GlobalScope &scope);
 
   void print(int indent, std::ostream &to) const;

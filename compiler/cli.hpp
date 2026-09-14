@@ -15,7 +15,9 @@ enum class DumpKind {
   /* The tree as source: what would parse back to the same structure. */
   Source,
   /* The classes and instances the program declares, once checked over. */
-  Classes
+  Classes,
+  /* The type inference settled on for every global. */
+  Types
 };
 
 class Cli {

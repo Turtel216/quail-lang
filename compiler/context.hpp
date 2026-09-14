@@ -54,11 +54,6 @@ public:
   void findFree(TypeManager &mgr, const std::set<std::string> &except,
                 std::set<std::string> &into) const;
 
-  /* `except` is the mutually recursive group `name` belongs to; its members
-   * are still being solved and must not pin each other down. */
-  void generalize(const std::string &name, const std::set<std::string> &except,
-                  TypeManager &mgr);
-
   inline const std::map<std::string, std::shared_ptr<Variable>>
   getNames() const noexcept {
     return this->names;
