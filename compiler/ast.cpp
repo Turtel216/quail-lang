@@ -6,6 +6,7 @@
 #include "error.hpp"
 #include "instructions.hpp"
 #include "types.hpp"
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <memory>
@@ -231,7 +232,12 @@ std::shared_ptr<ff::sem::Type> AstLid::typecheck(ff::sem::TypeManager &mgr) {
   auto variable = typeContext->lookup(id);
   /* Undefined names are reported before typechecking begins. */
   assert(variable != nullptr);
-  return variable->scheme->instantiate(mgr, loc);
+  /* Whatever the name holds under is taken on here, and a slot kept for
+   * each so that solving can say what to apply the name to. A use from
+   * inside the name's own group finds nothing to hold under yet, and is
+   * told what it passes along once the group is generalized. */
+  variable->uses.push_back(&evidence);
+  return variable->scheme->instantiate(mgr, loc, &evidence);
 }
 
 void AstLid::translate(GlobalScope &) {}
@@ -257,6 +263,16 @@ void AstLid::generate(
 void AstLid::print(int indent, std::ostream &to) const {
   printIndent(indent, to);
   to << "LID: " << id << std::endl;
+
+  for (auto &slot : evidence) {
+    printIndent(indent + 1, to);
+    to << "DICT: ";
+    if (slot->term)
+      slot->term->print(to);
+    else
+      to << "<unsolved>";
+    to << std::endl;
+  }
 }
 
 std::shared_ptr<ff::sem::Type> AstUid::typecheck(ff::sem::TypeManager &mgr) {
@@ -1324,7 +1340,11 @@ void DefinitionGroup::generalizeGroup(ff::sem::TypeManager &mgr,
                     definition.declaredContext.end());
   }
 
-  auto wanted = classEnv->reduce(mgr, mgr.takeWantedFrom(mark), declared);
+  /* The constraints as the bodies wanted them, kept because each is what a
+   * use is waiting on the answer to; and the same set reduced, which is what
+   * the group holds under. */
+  auto original = mgr.takeWantedFrom(mark);
+  auto wanted = classEnv->reduce(mgr, original, declared);
 
   /* Type variables the scope around the group already talks about. One of
    * those is not this group's to quantify, and a constraint about nothing
@@ -1421,7 +1441,31 @@ void DefinitionGroup::generalizeGroup(ff::sem::TypeManager &mgr,
       schemeContext.push_back(one.pred);
   }
 
+  /* The canonical order the dictionaries are taken in: by class name, then
+   * by the type constrained. Fixed here and nowhere else, so that a use and
+   * the definition it applies itself to agree without either having to look
+   * at the other. */
+  std::sort(schemeContext.begin(), schemeContext.end(),
+            [&mgr](const ff::sem::Pred &left, const ff::sem::Pred &right) {
+              if (left.className != right.className)
+                return left.className < right.className;
+              return ff::sem::structuralKey(mgr, left.type) <
+                     ff::sem::structuralKey(mgr, right.type);
+            });
+
+  /* One dictionary parameter per constraint. They are what the group has in
+   * hand while its uses are solved, and what it takes as arguments. */
+  std::vector<ff::sem::Given> givens;
+  std::vector<std::string> dictionaryParams;
+  for (std::size_t i = 0; i < schemeContext.size(); i++) {
+    auto paramName = ff::sem::dictionaryParamName(schemeContext[i].className, i);
+    dictionaryParams.push_back(paramName);
+    givens.push_back(ff::sem::Given(
+        schemeContext[i], ff::sem::EvidenceTerm::ofParameter(paramName)));
+  }
+
   for (auto &name : group.members) {
+    auto &definition = *defsDefn.find(name)->second;
     auto &scheme = *typeContext->lookup(name)->scheme;
     /* A binding is only ever reached once by its own group. */
     assert(scheme.forall.empty() && scheme.context.empty());
@@ -1437,12 +1481,52 @@ void DefinitionGroup::generalizeGroup(ff::sem::TypeManager &mgr,
       if (notQuantified.find(var) == notQuantified.end())
         scheme.forall.push_back(var);
     }
+
+    definition.dictionaryParams = dictionaryParams;
+
+    /* A use from inside the group passes on the very dictionaries the group
+     * was handed: it is the same definition, at the same type. */
+    for (auto *use : typeContext->lookup(name)->uses) {
+      if (!use->empty())
+        continue;
+
+      for (auto &given : givens) {
+        std::shared_ptr<ff::sem::EvidenceSlot> slot(new ff::sem::EvidenceSlot());
+        slot->term = given.evidence;
+        use->push_back(std::move(slot));
+      }
+    }
+
+    /* Ahead of the parameters the definition wrote, and bound where anything
+     * nested inside it will find them, so that lambda lifting captures them
+     * the way it captures any other local. */
+    std::vector<std::unique_ptr<Param>> withDictionaries;
+    for (auto &paramName : dictionaryParams) {
+      withDictionaries.push_back(
+          std::unique_ptr<Param>(new Param(paramName, nullptr, definition.loc)));
+      definition.varContext->bind(paramName, mgr.newType(),
+                                  ff::sem::Visibility::Local);
+    }
+
+    withDictionaries.insert(withDictionaries.end(),
+                            std::make_move_iterator(definition.params.begin()),
+                            std::make_move_iterator(definition.params.end()));
+    definition.params = std::move(withDictionaries);
   }
 
-  /* Whatever the group could not answer for is handed outward, to the scope
-   * that knows what its variables are. */
-  for (auto &one : deferred)
-    mgr.want(one.pred, one.loc);
+  /* Every use that took a constraint on is told how it is answered. What
+   * this group cannot answer is handed outward, still attached to the use,
+   * so the scope that knows what its variables are answers it instead. */
+  for (auto &one : original) {
+    auto term = classEnv->solve(mgr, givens, one.pred);
+    if (!term) {
+      mgr.want(one);
+      continue;
+    }
+
+    if (one.slot)
+      one.slot->term = std::move(term);
+  }
 }
 
 void DefinitionGroup::translate(GlobalScope &scope) {
@@ -1475,6 +1559,95 @@ void GlobalScope::add(DefinitionDefn &definition) {
    * next free variation of it. */
   definition.mangledName = mangle(definition.name);
   definitions.push_back(&definition);
+}
+
+// ############ Evidence ############
+
+/* Dictionaries are not part of the tree: they are terms hung off the uses
+ * that need them, since nothing typechecks, lifts or pattern matches on one.
+ * What still has to be walked is which of them a definition reaches for
+ * without having been handed it, because that is what lambda lifting must
+ * capture. */
+
+void AstInt::findEvidence(std::set<std::string> &) {}
+
+void AstLid::findEvidence(std::set<std::string> &into) {
+  for (auto &slot : evidence) {
+    /* Every slot is filled before this runs. */
+    assert(slot->term != nullptr);
+    slot->term->collectParameters(into);
+  }
+}
+
+void AstUid::findEvidence(std::set<std::string> &) {}
+
+void AstList::findEvidence(std::set<std::string> &into) {
+  for (auto &item : items)
+    item->findEvidence(into);
+}
+
+void AstBinop::findEvidence(std::set<std::string> &into) {
+  left->findEvidence(into);
+  right->findEvidence(into);
+}
+
+void AstApp::findEvidence(std::set<std::string> &into) {
+  left->findEvidence(into);
+  right->findEvidence(into);
+}
+
+void AstPipe::findEvidence(std::set<std::string> &into) {
+  value->findEvidence(into);
+  function->findEvidence(into);
+}
+
+void AstCompose::findEvidence(std::set<std::string> &into) {
+  left->findEvidence(into);
+  right->findEvidence(into);
+}
+
+void AstCase::findEvidence(std::set<std::string> &into) {
+  of->findEvidence(into);
+  for (auto &branch : branches)
+    branch->expr->findEvidence(into);
+}
+
+void AstIf::findEvidence(std::set<std::string> &into) {
+  condition->findEvidence(into);
+  thenBranch->findEvidence(into);
+  elseBranch->findEvidence(into);
+}
+
+/* A lambda takes no dictionaries of its own, so whatever its body reaches
+ * for it has to capture, and so does whatever encloses it. */
+void AstLambda::findEvidence(std::set<std::string> &into) {
+  std::set<std::string> used;
+  body->findEvidence(used);
+
+  freeVariables.insert(used.begin(), used.end());
+  into.insert(used.begin(), used.end());
+}
+
+void AstLet::findEvidence(std::set<std::string> &into) {
+  definitions->findEvidence(into);
+  in->findEvidence(into);
+}
+
+void DefinitionDefn::findEvidence(std::set<std::string> &into) {
+  std::set<std::string> used;
+  body->findEvidence(used);
+
+  /* What it was handed, it does not have to reach for. */
+  for (auto &param : dictionaryParams)
+    used.erase(param);
+
+  freeVariables.insert(used.begin(), used.end());
+  into.insert(used.begin(), used.end());
+}
+
+void DefinitionGroup::findEvidence(std::set<std::string> &into) {
+  for (auto &pair : defsDefn)
+    pair.second->findEvidence(into);
 }
 
 // ############ Source printing ############
@@ -1765,6 +1938,11 @@ void DefinitionInstance::print(int indent, std::ostream &to) const {
   to << "INSTANCE: ";
   head->printSource(to);
   to << std::endl;
+
+  for (auto &param : dictionaryParams) {
+    printIndent(indent + 1, to);
+    to << "PARAM: " << param << std::endl;
+  }
 
   for (auto &pred : context) {
     printIndent(indent + 1, to);

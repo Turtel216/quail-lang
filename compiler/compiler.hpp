@@ -46,6 +46,7 @@ private:
         void buildClassEnv();
         void typecheckInstances();
         void resolveRemaining();
+        void verifyEvidence();
         void printTypes() const;
         void typecheck();
         void translate();

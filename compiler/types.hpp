@@ -40,6 +40,23 @@ inline constexpr const char *composeAction = "compose";
  * environment have to agree on what counts as numeric. */
 inline constexpr const char *numClassName = "Num";
 
+/* Names for the things a class and its instances are compiled into. The
+ * marker cannot appear in an identifier the lexer will produce, so none of
+ * these can be the name of anything a program wrote. */
+inline constexpr const char *generatedMarker = "$";
+
+std::string dictionaryConstructorName(const std::string &className);
+std::string methodSelectorName(const std::string &className,
+                               const std::string &methodName);
+std::string superSelectorName(const std::string &className,
+                              const std::string &superName);
+std::string instanceDictionaryName(const std::string &className,
+                                   const std::string &headName);
+/* The dictionary parameter standing for the `index`th constraint a
+ * definition holds under, in the canonical order. */
+std::string dictionaryParamName(const std::string &className,
+                                std::size_t index);
+
 class TypeManager;
 class ClassEnv;
 
@@ -145,6 +162,44 @@ public:
   Qual(std::vector<Pred> p, T h) : preds(std::move(p)), head(std::move(h)) {}
 };
 
+/* How a constraint is answered once solving has decided.
+ *
+ * Either a dictionary the definition was handed, or one of the functions
+ * generated for a class or an instance applied to evidence for whatever it
+ * needs in turn: an instance dictionary built from its context, a superclass
+ * taken out of a dictionary, or a method taken out of one. */
+class EvidenceTerm {
+public:
+  /* The name of a dictionary parameter, or the symbol of a generated
+   * function. */
+  std::string name;
+  bool parameter;
+  std::vector<std::shared_ptr<EvidenceTerm>> arguments;
+
+  EvidenceTerm(std::string n, bool p,
+               std::vector<std::shared_ptr<EvidenceTerm>> a)
+      : name(std::move(n)), parameter(p), arguments(std::move(a)) {}
+
+  static std::shared_ptr<EvidenceTerm> ofParameter(std::string name);
+  static std::shared_ptr<EvidenceTerm>
+  ofApplication(std::string symbol,
+                std::vector<std::shared_ptr<EvidenceTerm>> arguments);
+
+  /* The dictionary parameters this term reaches for. What a definition uses
+   * but was not handed, it has to capture. */
+  void collectParameters(std::set<std::string> &into) const;
+
+  void print(std::ostream &to) const;
+};
+
+/* Where the answer to one constraint goes. The use that took the constraint
+ * on holds this, and so does the wanted constraint, so that solving the one
+ * fills in the other. */
+class EvidenceSlot {
+public:
+  std::shared_ptr<EvidenceTerm> term;
+};
+
 /* One constraint inference has run into and not yet accounted for, and the
  * expression whose typing ran into it, so that a constraint nothing can
  * solve is reported against the code that wanted it. */
@@ -152,8 +207,12 @@ class Wanted {
 public:
   Pred pred;
   yy::location loc;
+  /* Null for a constraint nothing is waiting on the answer to, which is
+   * every constraint a pattern or a constructor could take on. */
+  std::shared_ptr<EvidenceSlot> slot;
 
-  Wanted(Pred p, yy::location l) : pred(std::move(p)), loc(std::move(l)) {}
+  Wanted(Pred p, yy::location l, std::shared_ptr<EvidenceSlot> s = nullptr)
+      : pred(std::move(p)), loc(std::move(l)), slot(std::move(s)) {}
 };
 
 class TypeManager {
@@ -188,7 +247,9 @@ public:
 
   inline int getLastId() const noexcept { return this->lastId; }
 
-  void want(Pred pred, const yy::location &loc);
+  void want(Pred pred, const yy::location &loc,
+            std::shared_ptr<EvidenceSlot> slot = nullptr);
+  void want(Wanted wanted);
   /* Where the wanted set currently ends, so that everything a binding group
    * goes on to want can be taken back off in one piece. */
   std::size_t wantedMark() const noexcept;
@@ -218,8 +279,9 @@ public:
    * of an overloaded name is exactly where its constraints are taken on.
    * `loc` is the use, so that a constraint nothing solves can be reported
    * against it. */
-  std::shared_ptr<Type> instantiate(TypeManager &mgr,
-                                    const yy::location &loc) const;
+  std::shared_ptr<Type>
+  instantiate(TypeManager &mgr, const yy::location &loc,
+              std::vector<std::shared_ptr<EvidenceSlot>> *slots = nullptr) const;
 };
 
 /* Short, stable names for the variables of a type being written out. A type
@@ -241,5 +303,11 @@ void printReadable(const TypeManager &mgr, const Pred &pred, TypeNamer &namer,
                    std::ostream &to);
 void printReadable(const TypeManager &mgr, const TypeScheme &scheme,
                    std::ostream &to);
+
+/* A stable written form of a type, for putting a set of constraints into a
+ * fixed order. It uses the compiler's own variable names, which say nothing
+ * to a reader but come out the same on every run of a given program. */
+std::string structuralKey(const TypeManager &mgr,
+                          const std::shared_ptr<Type> &type);
 } // namespace sem
 } // namespace ff

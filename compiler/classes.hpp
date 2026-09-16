@@ -49,11 +49,22 @@ class InstanceInfo {
 public:
   std::vector<std::string> forall;
   Qual<Pred> qual;
-  const DefinitionInstance *declaration;
+  DefinitionInstance *declaration;
 
   InstanceInfo(std::vector<std::string> f, Qual<Pred> q,
-               const DefinitionInstance *d)
+               DefinitionInstance *d)
       : forall(std::move(f)), qual(std::move(q)), declaration(d) {}
+};
+
+/* A dictionary already in hand while solving: what it says, and how to get
+ * hold of it. */
+class Given {
+public:
+  Pred pred;
+  std::shared_ptr<EvidenceTerm> evidence;
+
+  Given(Pred p, std::shared_ptr<EvidenceTerm> e)
+      : pred(std::move(p)), evidence(std::move(e)) {}
 };
 
 class ClassInfo {
@@ -167,6 +178,22 @@ public:
 
   /* Every instance the environment holds, whatever class it belongs to. */
   std::vector<const InstanceInfo *> allInstances() const;
+
+  /* -- Evidence ---------------------------------------------------------- */
+
+  /* Build the evidence that answers `wanted`, given the dictionaries already
+   * in hand. Nothing when neither those nor an instance answers it.
+   *
+   * This is `entail` again, saying not only that the constraint holds but
+   * how: a superclass is taken out of the dictionary already held rather
+   * than solved afresh, which is why the superclass chain is walked first. */
+  std::shared_ptr<EvidenceTerm> solve(TypeManager &mgr,
+                                      const std::vector<Given> &given,
+                                      const Pred &wanted) const;
+
+  /* The name of the head constructor of an instance, which is what its
+   * generated dictionary function is named after. */
+  static std::string headName(TypeManager &mgr, const Pred &head);
 };
 
 /* Whether two constraints say the same thing about the same type. */

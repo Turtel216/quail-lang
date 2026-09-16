@@ -834,5 +834,89 @@ std::vector<const InstanceInfo *> ClassEnv::allInstances() const {
   return found;
 }
 
+std::string ClassEnv::headName(TypeManager &mgr, const Pred &head) {
+  TypeVar *var;
+  auto resolved = mgr.resolve(head.type, var);
+
+  if (auto *app = dynamic_cast<TypeApp *>(resolved.get())) {
+    if (auto *base = dynamic_cast<TypeBase *>(app->constructor.get()))
+      return base->getName();
+  }
+
+  /* Every instance head was checked to be a type constructor applied to
+   * distinct variables. */
+  assert(false && "instance head is not constructor headed");
+  return "";
+}
+
+namespace {
+
+/* Walk out from a dictionary through its superclasses, recording how each
+ * one is reached. `chain` is the evidence for `pred` itself. */
+void bySuperWithEvidence(const ClassEnv &env, TypeManager &mgr,
+                         const Pred &pred,
+                         const std::shared_ptr<EvidenceTerm> &chain,
+                         std::vector<Given> &into) {
+  into.push_back(Given(pred, chain));
+
+  const ClassInfo *info = env.lookup(pred.className);
+  if (!info)
+    return;
+
+  for (auto &super : info->supers) {
+    bySuperWithEvidence(
+        env, mgr, Pred(super.className, pred.type),
+        EvidenceTerm::ofApplication(
+            superSelectorName(info->name, super.className), {chain}),
+        into);
+  }
+}
+
+} // namespace
+
+std::shared_ptr<EvidenceTerm> ClassEnv::solve(TypeManager &mgr,
+                                              const std::vector<Given> &given,
+                                              const Pred &wanted) const {
+  /* A dictionary already held, or a superclass of one, is taken as it is:
+   * nothing is solved twice, and nothing is built that is already to hand. */
+  for (auto &held : given) {
+    std::vector<Given> implied;
+    bySuperWithEvidence(*this, mgr, held.pred, held.evidence, implied);
+
+    for (auto &one : implied) {
+      if (samePred(mgr, one.pred, wanted))
+        return one.evidence;
+    }
+  }
+
+  const ClassInfo *info = lookup(wanted.className);
+  if (!info)
+    return nullptr;
+
+  for (auto &instance : info->instances) {
+    std::map<std::string, std::shared_ptr<Type>> subst;
+    if (!matchType(mgr, instance.qual.head.type, wanted.type, subst))
+      continue;
+
+    std::vector<std::shared_ptr<EvidenceTerm>> arguments;
+    for (auto &contextPred : instance.qual.preds) {
+      auto argument =
+          solve(mgr, given,
+                Pred(contextPred.className, mgr.substitute(subst, contextPred.type)));
+      if (!argument)
+        return nullptr;
+
+      arguments.push_back(std::move(argument));
+    }
+
+    return EvidenceTerm::ofApplication(
+        instanceDictionaryName(info->name,
+                               headName(mgr, instance.qual.head)),
+        std::move(arguments));
+  }
+
+  return nullptr;
+}
+
 } // namespace sem
 } // namespace ff

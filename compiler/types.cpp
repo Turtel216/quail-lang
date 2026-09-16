@@ -144,8 +144,71 @@ void TypeManager::bind(const std::string &s, std::shared_ptr<Type> t) {
   types[s] = t;
 }
 
-void TypeManager::want(Pred pred, const yy::location &loc) {
-  this->wanted.push_back(Wanted(std::move(pred), loc));
+std::string dictionaryConstructorName(const std::string &className) {
+  return className + generatedMarker + "dict";
+}
+
+std::string methodSelectorName(const std::string &className,
+                               const std::string &methodName) {
+  return className + generatedMarker + "sel" + generatedMarker + methodName;
+}
+
+std::string superSelectorName(const std::string &className,
+                              const std::string &superName) {
+  return className + generatedMarker + "super" + generatedMarker + superName;
+}
+
+std::string instanceDictionaryName(const std::string &className,
+                                   const std::string &headName) {
+  return className + generatedMarker + headName + generatedMarker + "inst";
+}
+
+std::string dictionaryParamName(const std::string &className,
+                                std::size_t index) {
+  return "d" + std::string(generatedMarker) + className +
+         std::string(generatedMarker) + std::to_string(index);
+}
+
+std::shared_ptr<EvidenceTerm> EvidenceTerm::ofParameter(std::string name) {
+  return std::shared_ptr<EvidenceTerm>(
+      new EvidenceTerm(std::move(name), true, {}));
+}
+
+std::shared_ptr<EvidenceTerm> EvidenceTerm::ofApplication(
+    std::string symbol, std::vector<std::shared_ptr<EvidenceTerm>> arguments) {
+  return std::shared_ptr<EvidenceTerm>(
+      new EvidenceTerm(std::move(symbol), false, std::move(arguments)));
+}
+
+void EvidenceTerm::collectParameters(std::set<std::string> &into) const {
+  if (parameter)
+    into.insert(name);
+
+  for (auto &argument : arguments)
+    argument->collectParameters(into);
+}
+
+void EvidenceTerm::print(std::ostream &to) const {
+  if (arguments.empty()) {
+    to << name;
+    return;
+  }
+
+  to << "(" << name;
+  for (auto &argument : arguments) {
+    to << " ";
+    argument->print(to);
+  }
+  to << ")";
+}
+
+void TypeManager::want(Pred pred, const yy::location &loc,
+                       std::shared_ptr<EvidenceSlot> slot) {
+  this->wanted.push_back(Wanted(std::move(pred), loc, std::move(slot)));
+}
+
+void TypeManager::want(Wanted wanted) {
+  this->wanted.push_back(std::move(wanted));
 }
 
 std::size_t TypeManager::wantedMark() const noexcept {
@@ -163,13 +226,26 @@ std::vector<Wanted> TypeManager::takeWantedFrom(std::size_t mark) {
   return taken;
 }
 
-std::shared_ptr<Type> TypeScheme::instantiate(TypeManager &mgr,
-                                              const yy::location &loc) const {
+std::shared_ptr<Type> TypeScheme::instantiate(
+    TypeManager &mgr, const yy::location &loc,
+    std::vector<std::shared_ptr<EvidenceSlot>> *slots) const {
+  /* One slot per constraint, handed to the manager with the constraint and
+   * kept by the use, so that solving the constraint tells the use what to
+   * apply itself to. */
+  auto take = [&](Pred pred) {
+    std::shared_ptr<EvidenceSlot> slot;
+    if (slots) {
+      slot = std::shared_ptr<EvidenceSlot>(new EvidenceSlot());
+      slots->push_back(slot);
+    }
+    mgr.want(std::move(pred), loc, std::move(slot));
+  };
+
   if (forall.size() == 0) {
     /* A scheme quantifying nothing still stands for what it holds under: an
      * instance method is checked with its own instance context in hand. */
     for (auto &pred : context)
-      mgr.want(pred, loc);
+      take(pred);
     return monotype;
   }
 
@@ -179,7 +255,7 @@ std::shared_ptr<Type> TypeScheme::instantiate(TypeManager &mgr,
   }
 
   for (auto &pred : context)
-    mgr.want(Pred(pred.className, mgr.substitute(subst, pred.type)), loc);
+    take(Pred(pred.className, mgr.substitute(subst, pred.type)));
 
   return mgr.substitute(subst, monotype);
 }
@@ -292,6 +368,31 @@ void printReadable(const TypeManager &mgr, const std::shared_ptr<Type> &type,
   }
 
   resolved->print(mgr, to);
+}
+
+std::string structuralKey(const TypeManager &mgr,
+                          const std::shared_ptr<Type> &type) {
+  TypeVar *var;
+  auto resolved = mgr.resolve(type, var);
+
+  if (var)
+    return var->getName();
+
+  if (auto *arr = dynamic_cast<TypeArr *>(resolved.get()))
+    return "(" + structuralKey(mgr, arr->getLeft()) + "->" +
+           structuralKey(mgr, arr->getRight()) + ")";
+
+  if (auto *app = dynamic_cast<TypeApp *>(resolved.get())) {
+    std::string key = "(" + structuralKey(mgr, app->constructor);
+    for (auto &argument : app->arguments)
+      key += " " + structuralKey(mgr, argument);
+    return key + ")";
+  }
+
+  if (auto *base = dynamic_cast<TypeBase *>(resolved.get()))
+    return base->getName();
+
+  return "?";
 }
 
 void printReadable(const TypeManager &mgr, const Pred &pred, TypeNamer &namer,

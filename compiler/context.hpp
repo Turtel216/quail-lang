@@ -20,6 +20,18 @@ public:
   Visibility visibility;
   std::optional<std::string> mangledName;
 
+  /* Where each use of this name keeps the evidence it will be applied to.
+   *
+   * A binding is monomorphic while its own group is being solved, so a use
+   * from inside that group takes on no constraints and asks for no evidence.
+   * What it is really doing is passing along the dictionaries the group was
+   * handed, which is only known once the group has been generalized. These
+   * are the uses that have to be told so.
+   *
+   * The vectors are members of the expressions that hold them, which outlive
+   * inference. */
+  std::vector<std::vector<std::shared_ptr<EvidenceSlot>> *> uses;
+
   Variable(std::shared_ptr<TypeScheme> s, Visibility v, std::optional<std::string> name)
       : scheme(std::move(s)), visibility(v), mangledName(std::move(name)) {}
 

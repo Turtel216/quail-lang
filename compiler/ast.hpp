@@ -49,6 +49,11 @@ public:
   generate(const std::shared_ptr<ff::ir::Enviroment> &env,
            std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const = 0;
 
+  /* Collect the dictionaries this subtree reaches for but was not handed.
+   * Runs after elaboration and mirrors findFree: each construct that takes
+   * dictionaries of its own removes them before passing the set on. */
+  virtual void findEvidence(std::set<std::string> &into) = 0;
+
   virtual void print(int indent, std::ostream &to) const = 0;
 
   /* Write this subtree back out as the source that would parse to it again.
@@ -128,6 +133,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
 
   void printSource(std::ostream &to) const override;
@@ -139,6 +146,10 @@ public:
   /* Set on the references left behind by lambda lifting, whose id is already
    * the symbol of a global rather than a name the surrounding scope binds. */
   bool lifted;
+  /* One slot per constraint the name holds under, in the order the name
+   * takes its dictionaries in. Filled in when the binding group around this
+   * use is solved, and applied to the name at code generation. */
+  std::vector<std::shared_ptr<ff::sem::EvidenceSlot>> evidence;
 
   explicit AstLid(std::string i, yy::location lc = yy::location())
       : Ast(std::move(lc)), id(std::move(i)), lifted(false) {}
@@ -154,6 +165,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
 
@@ -178,6 +191,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
 
   void printSource(std::ostream &to) const override;
@@ -204,6 +219,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
 
@@ -233,6 +250,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
 
   void printSource(std::ostream &to) const override;
@@ -258,6 +277,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
 
   void printSource(std::ostream &to) const override;
@@ -288,6 +309,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
 
   void printSource(std::ostream &to) const override;
@@ -317,6 +340,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
 
   void printSource(std::ostream &to) const override;
@@ -345,6 +370,8 @@ public:
                 std::set<std::string> &into) override;
 
   void translate(GlobalScope &scope) override;
+
+  void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
 
@@ -380,6 +407,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
 
@@ -455,6 +484,12 @@ public: // TODO: Fix encapsulation
    * Empty when nothing did, and the mismatch is an ordinary one. */
   std::string returnDescription;
 
+  /* One parameter per constraint the definition holds under, in the
+   * canonical order. Prepended to params once the group is generalized, so
+   * that everything downstream sees an ordinary function of a larger
+   * arity. */
+  std::vector<std::string> dictionaryParams;
+
   /* A local definition is reachable only through a stack slot, so anything
    * nested inside it that mentions one must take it as an extra parameter. */
   ff::sem::Visibility visibility;
@@ -492,6 +527,10 @@ public: // TODO: Fix encapsulation
   void compile();
   void declareLLVM(ff::cg::CodeGenerator &generator);
   void generateLLVM(ff::cg::CodeGenerator &generator);
+
+  /* Gather what the body reaches for and the definition was not handed, so
+   * that lambda lifting knows to capture it. */
+  void findEvidence(std::set<std::string> &into);
 
   void print(int indent, std::ostream &to) const;
   /* `keyword` is what introduces the definition in the source. A class method
@@ -573,6 +612,10 @@ public:
   ff::sem::ParsedContext context;
   std::unique_ptr<ff::sem::ParsedPred> head;
   std::vector<std::unique_ptr<DefinitionDefn>> methods;
+  /* One parameter per constraint the instance holds under, in the canonical
+   * order. The dictionary this instance builds is a function of them, and
+   * its method bodies reach for them. */
+  std::vector<std::string> dictionaryParams;
 
   yy::location loc;
 
@@ -613,6 +656,7 @@ public:
                 std::shared_ptr<ff::sem::TypeContext> &typeCtx,
                 ff::sem::Visibility visibility, std::set<std::string> &into);
   void typecheck(ff::sem::TypeManager &mgr);
+  void findEvidence(std::set<std::string> &into);
   /* Solve what one binding group wanted, then quantify its members over
    * whatever is left. `mark` is where the wanted set stood before the group
    * was checked. */
@@ -676,6 +720,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
 
   void printSource(std::ostream &to) const override;
@@ -710,6 +756,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
 

@@ -17,7 +17,10 @@ enum class DumpKind {
   /* The classes and instances the program declares, once checked over. */
   Classes,
   /* The type inference settled on for every global. */
-  Types
+  Types,
+  /* The program once elaborated: dictionaries taken as parameters, and
+   * applied at every use that needs one. */
+  Core
 };
 
 class Cli {

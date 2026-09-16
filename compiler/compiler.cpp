@@ -6,6 +6,7 @@
 #include "parse_driver.hpp"
 #include "types.hpp"
 #include <cassert>
+#include <algorithm>
 #include <cstdlib>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
@@ -207,6 +208,7 @@ void Compiler::dump() {
     classEnv.print(std::cout);
     break;
   case DumpKind::Types:
+  case DumpKind::Core:
   case DumpKind::None:
     break;
   }
@@ -243,6 +245,7 @@ void Compiler::typecheck() {
   globalDefs.typecheck(manager);
   typecheckInstances();
   resolveRemaining();
+  verifyEvidence();
 }
 
 /* Check what each instance provides against what its class asked for.
@@ -265,11 +268,30 @@ void Compiler::typecheckInstances() {
 
     auto headType = manager.substitute(subst, instance->qual.head.type);
 
-    /* What the instance was allowed to assume. */
+    /* What the instance was allowed to assume, in the canonical order, one
+     * dictionary parameter each. The dictionary this instance builds is a
+     * function of them, and its method bodies reach for them. */
     std::vector<sem::Pred> given;
     for (auto &pred : instance->qual.preds)
       given.push_back(
           sem::Pred(pred.className, manager.substitute(subst, pred.type)));
+
+    std::sort(given.begin(), given.end(),
+              [this](const sem::Pred &left, const sem::Pred &right) {
+                if (left.className != right.className)
+                  return left.className < right.className;
+                return sem::structuralKey(manager, left.type) <
+                       sem::structuralKey(manager, right.type);
+              });
+
+    std::vector<sem::Given> evidence;
+    instance->declaration->dictionaryParams.clear();
+    for (std::size_t i = 0; i < given.size(); i++) {
+      auto paramName = sem::dictionaryParamName(given[i].className, i);
+      instance->declaration->dictionaryParams.push_back(paramName);
+      evidence.push_back(
+          sem::Given(given[i], sem::EvidenceTerm::ofParameter(paramName)));
+    }
 
     for (auto &method : instance->declaration->methods) {
       const sem::MethodInfo *methodInfo = info->lookupMethod(method->name);
@@ -311,8 +333,9 @@ void Compiler::typecheckInstances() {
       }
       method->typecheck(manager);
 
-      for (auto &one :
-           classEnv.reduce(manager, manager.takeWantedFrom(mark), given)) {
+      auto methodWanted = manager.takeWantedFrom(mark);
+
+      for (auto &one : classEnv.reduce(manager, methodWanted, given)) {
         if (classEnv.entail(manager, given, one.pred))
           continue;
 
@@ -324,6 +347,17 @@ void Compiler::typecheckInstances() {
 
         throw ff::TypeError(errorStream.str(), one.loc);
       }
+
+      /* Everything the body wanted is answered by what the instance holds
+       * under, so each use can be told what to apply itself to. */
+      for (auto &one : methodWanted) {
+        auto term = classEnv.solve(manager, evidence, one.pred);
+        /* The reduction above already established that each is answerable. */
+        assert(term != nullptr);
+
+        if (one.slot)
+          one.slot->term = std::move(term);
+      }
     }
   }
 }
@@ -331,30 +365,69 @@ void Compiler::typecheckInstances() {
 /* Constraints that reached the top level unanswered. Nothing encloses it, so
  * each is settled by defaulting or is a mistake. */
 void Compiler::resolveRemaining() {
-  auto leftover = classEnv.reduce(manager, manager.takeWantedFrom(0));
-  if (leftover.empty())
-    return;
+  auto original = manager.takeWantedFrom(0);
+  auto leftover = classEnv.reduce(manager, original);
 
-  std::vector<sem::Pred> preds;
-  std::set<std::string> vars;
-  for (auto &one : leftover) {
-    preds.push_back(one.pred);
-    manager.findFree(one.pred.type, vars);
+  if (!leftover.empty()) {
+    std::vector<sem::Pred> preds;
+    std::set<std::string> vars;
+    for (auto &one : leftover) {
+      preds.push_back(one.pred);
+      manager.findFree(one.pred.type, vars);
+    }
+
+    for (auto &var : vars)
+      classEnv.defaultVariable(manager, var, preds);
+
+    leftover = classEnv.reduce(manager, std::move(leftover));
   }
 
-  for (auto &var : vars)
-    classEnv.defaultVariable(manager, var, preds);
+  if (!leftover.empty()) {
+    sem::TypeNamer namer;
+    std::ostringstream errorStream;
+    errorStream << "nothing settles ";
+    sem::printReadable(manager, leftover.front().pred, namer, errorStream);
 
-  leftover = classEnv.reduce(manager, std::move(leftover));
-  if (leftover.empty())
-    return;
+    throw ff::TypeError(errorStream.str(), leftover.front().loc);
+  }
 
-  sem::TypeNamer namer;
-  std::ostringstream errorStream;
-  errorStream << "nothing settles ";
-  sem::printReadable(manager, leftover.front().pred, namer, errorStream);
+  /* Nothing encloses the top level, so what is left is answered by the
+   * instances alone. */
+  for (auto &one : original) {
+    auto term = classEnv.solve(manager, {}, one.pred);
+    /* The reduction above already established that each is answerable. */
+    assert(term != nullptr);
 
-  throw ff::TypeError(errorStream.str(), leftover.front().loc);
+    if (one.slot)
+      one.slot->term = std::move(term);
+  }
+}
+
+/* After elaboration nothing is left unanswered, and every dictionary a body
+ * reaches for is one it was handed. The first is asserted where the evidence
+ * is walked; this is the second. */
+void Compiler::verifyEvidence() {
+  std::set<std::string> escaping;
+  globalDefs.findEvidence(escaping);
+
+  if (!escaping.empty())
+    throw ff::CompilerError("the dictionary " + *escaping.begin() +
+                            " is used where nothing provides it");
+
+  for (const sem::InstanceInfo *instance : classEnv.allInstances()) {
+    for (auto &method : instance->declaration->methods) {
+      std::set<std::string> used;
+      method->findEvidence(used);
+
+      for (auto &param : instance->declaration->dictionaryParams)
+        used.erase(param);
+
+      if (!used.empty())
+        throw ff::CompilerError("the dictionary " + *used.begin() +
+                                " is used where nothing provides it",
+                                method->loc);
+    }
+  }
 }
 
 void Compiler::printTypes() const {
@@ -571,6 +644,11 @@ void Compiler::operator()() {
 
   if (dumpKind == DumpKind::Types) {
     printTypes();
+    return;
+  }
+
+  if (dumpKind == DumpKind::Core) {
+    globalDefs.print(0, std::cout);
     return;
   }
 
