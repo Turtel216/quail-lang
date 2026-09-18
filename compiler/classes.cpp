@@ -522,6 +522,10 @@ void ClassEnv::bindMethods(TypeContext &typeCtx) const {
           Pred(info.name, std::shared_ptr<Type>(new TypeVar(info.var))));
 
       typeCtx.bind(method.name, std::move(scheme), Visibility::Global);
+      /* A use of a method is a push of the selector that takes it out of a
+       * dictionary, applied to the dictionary the use was told to hand it. */
+      typeCtx.setMangledName(method.name,
+                             methodSelectorName(info.name, method.name));
     }
   }
 }

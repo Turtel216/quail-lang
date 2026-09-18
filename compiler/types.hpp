@@ -52,6 +52,11 @@ std::string superSelectorName(const std::string &className,
                               const std::string &superName);
 std::string instanceDictionaryName(const std::string &className,
                                    const std::string &headName);
+/* The function a class's default implementation of a method becomes. It
+ * takes the dictionary it is a field of, so that it may call any other
+ * method of the same class. */
+std::string defaultMethodName(const std::string &className,
+                              const std::string &methodName);
 /* The dictionary parameter standing for the `index`th constraint a
  * definition holds under, in the canonical order. */
 std::string dictionaryParamName(const std::string &className,

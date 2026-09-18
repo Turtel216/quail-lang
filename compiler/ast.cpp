@@ -36,6 +36,55 @@ std::unique_ptr<Ast> partialApplication(const DefinitionDefn &definition) {
   return application;
 }
 
+/* A reference to one of the functions the compiler generates. It names its
+ * symbol outright, the way a lifted definition does. */
+std::unique_ptr<Ast> evidenceGlobal(const std::string &symbol) {
+  AstLid *global = new AstLid(symbol);
+  global->lifted = true;
+  return std::unique_ptr<Ast>(global);
+}
+
+/* The expression that builds a piece of evidence. A dictionary the
+ * definition was handed is named; anything else is one of the generated
+ * functions applied to evidence of its own. */
+std::unique_ptr<Ast> evidenceAst(const ff::sem::EvidenceTerm &term) {
+  if (term.parameter)
+    return std::unique_ptr<Ast>(new AstLid(term.name));
+
+  std::unique_ptr<Ast> application = evidenceGlobal(term.name);
+  for (auto &argument : term.arguments)
+    application = std::unique_ptr<Ast>(
+        new AstApp(std::move(application), evidenceAst(*argument)));
+
+  return application;
+}
+
+/* Push what a piece of evidence comes to. A dictionary the definition was
+ * handed is a stack slot; anything else is one of the generated functions
+ * applied to evidence of its own, which is an application like any other. */
+void generateEvidence(const ff::sem::EvidenceTerm &term,
+                      const std::shared_ptr<ff::ir::Enviroment> &env,
+                      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) {
+  if (term.parameter) {
+    into.push_back(std::unique_ptr<ff::ir::Instruction>(
+        new ff::ir::Push(env->getOffset(term.name))));
+    return;
+  }
+
+  std::shared_ptr<ff::ir::Enviroment> current = env;
+  for (auto it = term.arguments.rbegin(); it != term.arguments.rend(); it++) {
+    generateEvidence(**it, current, into);
+    current = std::shared_ptr<ff::ir::Enviroment>(
+        new ff::ir::EnviromentOffset(1, current));
+  }
+
+  into.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::PushGlobal(term.name)));
+
+  for (std::size_t i = 0; i < term.arguments.size(); i++)
+    into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
+}
+
 /* The type variables a signature writes, and the fresh variables they stand
  * for. Each definition gets its own set: two definitions that both write `a`
  * are not thereby talking about the same type. */
@@ -245,19 +294,33 @@ void AstLid::translate(GlobalScope &) {}
 void AstLid::generate(
     const std::shared_ptr<ff::ir::Enviroment> &env,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
+  /* The dictionaries the name holds under go down first, deepest last, so
+   * that pushing the name itself leaves the whole application to be built by
+   * one MkApp each. */
+  std::shared_ptr<ff::ir::Enviroment> current = env;
+  for (auto it = evidence.rbegin(); it != evidence.rend(); it++) {
+    /* Every slot is filled before code is generated. */
+    assert((*it)->term != nullptr);
+    generateEvidence(*(*it)->term, current, into);
+    current = std::shared_ptr<ff::ir::Enviroment>(
+        new ff::ir::EnviromentOffset(1, current));
+  }
+
   /* A lifted reference names its global outright; it was created after
    * typechecking and so has no scope to resolve the name against. */
   if (lifted) {
     into.push_back(
         std::unique_ptr<ff::ir::Instruction>(new ff::ir::PushGlobal(id)));
-    return;
+  } else {
+    into.push_back(std::unique_ptr<ff::ir::Instruction>(
+        current->hasVariable(id)
+            ? (ff::ir::Instruction *)new ff::ir::Push(current->getOffset(id))
+            : (ff::ir::Instruction *)new ff::ir::PushGlobal(
+                  this->typeContext->getMangledName(id))));
   }
 
-  into.push_back(std::unique_ptr<ff::ir::Instruction>(
-      env->hasVariable(id)
-          ? (ff::ir::Instruction *)new ff::ir::Push(env->getOffset(id))
-          : (ff::ir::Instruction *)new ff::ir::PushGlobal(
-                this->typeContext->getMangledName(id))));
+  for (std::size_t i = 0; i < evidence.size(); i++)
+    into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
 }
 
 void AstLid::print(int indent, std::ostream &to) const {
@@ -1559,6 +1622,122 @@ void GlobalScope::add(DefinitionDefn &definition) {
    * next free variation of it. */
   definition.mangledName = mangle(definition.name);
   definitions.push_back(&definition);
+}
+
+// ############ Classes and instances ############
+
+/* A class becomes a data type of one constructor, whose fields are the
+ * dictionaries of its superclasses followed by its methods, and one selector
+ * for each of those fields. An instance becomes a function from the
+ * dictionaries it holds under to the dictionary it builds.
+ *
+ * The fields go in the order the constructor takes its arguments, which
+ * Split then hands back at the same offsets, so a selector is a match on the
+ * one constructor and nothing more. */
+
+void DefinitionClass::generateLLVM(ff::cg::CodeGenerator &generator) {
+  std::size_t arity = dictionaryArity();
+
+  generateConstructorLLVM(
+      generator, ff::sem::dictionaryConstructorName(getName()), 0, arity);
+
+  auto selector = [&](const std::string &symbol, std::size_t field) {
+    auto function = generator.createCustomFunction(symbol, 1);
+
+    std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+    instructions.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Push(0)));
+    /* The dictionary reaches this as a thunk the first time round: an
+     * instance builds it lazily, like anything else. */
+    instructions.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Eval()));
+    instructions.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Split(arity)));
+    instructions.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Push(field)));
+    instructions.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Slide(arity)));
+    instructions.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(1)));
+    instructions.push_back(
+        std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(1)));
+
+    generator.getBuilder().SetInsertPoint(&function->getEntryBlock());
+    for (auto &instruction : instructions)
+      instruction->generate(generator, function);
+    generator.getBuilder().CreateRetVoid();
+  };
+
+  std::size_t field = 0;
+  for (auto &super : supers)
+    selector(ff::sem::superSelectorName(getName(), super->className), field++);
+  for (auto &method : methods)
+    selector(ff::sem::methodSelectorName(getName(), method->name), field++);
+}
+
+void DefinitionInstance::compile() {
+  std::size_t arity = dictionaryParams.size();
+
+  auto paramEnv = std::shared_ptr<ff::ir::Enviroment>(
+      new ff::ir::EnviromentOffset(0, nullptr));
+  for (auto it = dictionaryParams.rbegin(); it != dictionaryParams.rend(); it++)
+    paramEnv = std::shared_ptr<ff::ir::Enviroment>(
+        new ff::ir::EnviromentVar(*it, paramEnv));
+
+  /* A placeholder for the dictionary itself, so that a default method can be
+   * handed the very dictionary it is a field of. Nothing forces it while it
+   * is being built: every field is an unevaluated graph, so the knot is tied
+   * by the Update below rather than by anything looking at it. */
+  const std::string self = std::string("d") + ff::sem::generatedMarker + "self";
+
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Alloc(1)));
+
+  auto env = std::shared_ptr<ff::ir::Enviroment>(
+      new ff::ir::EnviromentVar(self, paramEnv));
+
+  std::unique_ptr<Ast> dictionary = evidenceGlobal(
+      ff::sem::dictionaryConstructorName(head->className));
+
+  for (auto &field : dictionaryFields) {
+    std::unique_ptr<Ast> value;
+
+    if (field.evidence) {
+      value = evidenceAst(*field.evidence);
+    } else if (field.method) {
+      value = partialApplication(*field.method);
+    } else {
+      /* The class's default, handed the dictionary it is a field of, so that
+       * it may call any other method of the same class. */
+      value = std::unique_ptr<Ast>(
+          new AstApp(evidenceGlobal(field.defaultSymbol),
+                     std::unique_ptr<Ast>(new AstLid(self))));
+    }
+
+    dictionary = std::unique_ptr<Ast>(
+        new AstApp(std::move(dictionary), std::move(value)));
+  }
+
+  dictionary->generate(env, instructions);
+
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(0)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(arity)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(arity)));
+}
+
+void DefinitionInstance::declareLLVM(ff::cg::CodeGenerator &generator) {
+  generatedFunction =
+      generator.createCustomFunction(mangledName, dictionaryParams.size());
+}
+
+void DefinitionInstance::generateLLVM(ff::cg::CodeGenerator &generator) {
+  generator.getBuilder().SetInsertPoint(&generatedFunction->getEntryBlock());
+  for (auto &instruction : instructions)
+    instruction->generate(generator, generatedFunction);
+  generator.getBuilder().CreateRetVoid();
 }
 
 // ############ Evidence ############

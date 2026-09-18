@@ -243,9 +243,105 @@ void Compiler::typecheck() {
   }
 
   globalDefs.typecheck(manager);
+  typecheckDefaults();
   typecheckInstances();
   resolveRemaining();
   verifyEvidence();
+}
+
+/* Check the default a class supplies for a method it does not insist every
+ * instance implement.
+ *
+ * A default is compiled once, as a function of the dictionary it will be a
+ * field of, so that it may call any other method of the same class. That
+ * dictionary is the only thing it holds under. */
+void Compiler::typecheckDefaults() {
+  for (auto &pair : globalDefs.defsClass) {
+    auto &declaration = *pair.second;
+    const sem::ClassInfo *info = classEnv.lookup(declaration.getName());
+    /* Every class the program declared is in the environment. */
+    assert(info != nullptr);
+
+    for (auto &method : declaration.methods) {
+      if (!method->body)
+        continue;
+
+      const sem::MethodInfo *methodInfo = info->lookupMethod(method->name);
+      assert(methodInfo != nullptr);
+
+      /* The class variable stands for whatever the instance turns out to be
+       * about, so the default is checked at a variable of its own. */
+      std::map<std::string, std::shared_ptr<sem::Type>> subst;
+      for (auto &var : methodInfo->forall)
+        subst[var] = manager.newType();
+
+      auto expected = manager.substitute(subst, methodInfo->type);
+      sem::Pred held(info->name, subst.at(info->var));
+
+      auto paramName = sem::dictionaryParamName(info->name, 0);
+      std::vector<sem::Given> evidence;
+      evidence.push_back(
+          sem::Given(held, sem::EvidenceTerm::ofParameter(paramName)));
+
+      std::size_t mark = manager.wantedMark();
+
+      method->returnDescription = "the default for " + method->name +
+                                  " does not have the type " + info->name +
+                                  " declares for it";
+      method->findFree(manager, globalContext);
+      for (auto &free : method->freeVariables) {
+        if (globalContext->lookup(free) == nullptr)
+          throw ff::TypeError("undefined variable " + free, method->loc);
+      }
+
+      try {
+        manager.unify(method->fullType, expected, method->loc);
+      } catch (const ff::UnificationError &) {
+        throw ff::UnificationError(expected, method->fullType, method->loc,
+                                   method->returnDescription);
+      }
+      method->typecheck(manager);
+
+      auto methodWanted = manager.takeWantedFrom(mark);
+      std::vector<sem::Pred> given{held};
+
+      for (auto &one : classEnv.reduce(manager, methodWanted, given)) {
+        if (classEnv.entail(manager, given, one.pred))
+          continue;
+
+        sem::TypeNamer namer;
+        std::ostringstream errorStream;
+        errorStream << "the default for " << method->name << " needs ";
+        sem::printReadable(manager, one.pred, namer, errorStream);
+        errorStream << ", which " << info->name << " does not hold under";
+
+        throw ff::TypeError(errorStream.str(), one.loc);
+      }
+
+      for (auto &one : methodWanted) {
+        auto term = classEnv.solve(manager, evidence, one.pred);
+        /* The reduction above already established that each is answerable. */
+        assert(term != nullptr);
+
+        if (one.slot)
+          one.slot->term = std::move(term);
+      }
+
+      /* The dictionary is an ordinary first parameter, ahead of the ones the
+       * method wrote, and is bound where anything nested will find it. */
+      method->dictionaryParams.push_back(paramName);
+      method->varContext->bind(paramName, manager.newType(),
+                               sem::Visibility::Local);
+
+      std::vector<std::unique_ptr<Param>> withDictionary;
+      withDictionary.push_back(
+          std::unique_ptr<Param>(new Param(paramName, nullptr, method->loc)));
+      withDictionary.insert(withDictionary.end(),
+                            std::make_move_iterator(method->params.begin()),
+                            std::make_move_iterator(method->params.end()));
+      method->params = std::move(withDictionary);
+    }
+  }
 }
 
 /* Check what each instance provides against what its class asked for.
@@ -286,11 +382,19 @@ void Compiler::typecheckInstances() {
 
     std::vector<sem::Given> evidence;
     instance->declaration->dictionaryParams.clear();
+
+    /* The dictionaries are bound where the methods will look for them, so
+     * that lifting a method captures them the way it captures any other
+     * local. They belong to the instance, not to any one method. */
+    auto instanceContext = sem::typeScope(globalContext);
+
     for (std::size_t i = 0; i < given.size(); i++) {
       auto paramName = sem::dictionaryParamName(given[i].className, i);
       instance->declaration->dictionaryParams.push_back(paramName);
       evidence.push_back(
           sem::Given(given[i], sem::EvidenceTerm::ofParameter(paramName)));
+      instanceContext->bind(paramName, manager.newType(),
+                            sem::Visibility::Local);
     }
 
     for (auto &method : instance->declaration->methods) {
@@ -315,9 +419,9 @@ void Compiler::typecheckInstances() {
                                   " does not have the type " + info->name +
                                   " declares for it";
 
-      method->findFree(manager, globalContext);
+      method->findFree(manager, instanceContext);
       for (auto &free : method->freeVariables) {
-        if (globalContext->lookup(free) == nullptr)
+        if (instanceContext->lookup(free) == nullptr)
           throw ff::TypeError("undefined variable " + free, method->loc);
       }
 
@@ -359,6 +463,64 @@ void Compiler::typecheckInstances() {
           one.slot->term = std::move(term);
       }
     }
+
+    layOutDictionary(*instance, *info, headType, evidence);
+  }
+}
+
+/* What goes in each field of the dictionary this instance builds: the
+ * superclass dictionaries first, then one entry per method of the class, in
+ * the order the class declared them. */
+void Compiler::layOutDictionary(const sem::InstanceInfo &instance,
+                                const sem::ClassInfo &info,
+                                const std::shared_ptr<sem::Type> &headType,
+                                const std::vector<sem::Given> &evidence) {
+  auto &declaration = *instance.declaration;
+
+  declaration.mangledName = sem::instanceDictionaryName(
+      info.name, sem::ClassEnv::headName(manager, instance.qual.head));
+
+  for (auto &super : info.supers) {
+    sem::Pred needed(super.className, headType);
+    auto term = classEnv.solve(manager, evidence, needed);
+
+    /* A class says an instance of it is already an instance of each of its
+     * superclasses. Nothing has checked that until now, because the answer
+     * is the dictionary field itself. */
+    if (!term) {
+      sem::TypeNamer namer;
+      std::ostringstream errorStream;
+      errorStream << "the instance ";
+      sem::printReadable(manager, instance.qual.head, namer, errorStream);
+      errorStream << " needs ";
+      sem::printReadable(manager, needed, namer, errorStream);
+      errorStream << ", which no instance provides";
+
+      throw ff::TypeError(errorStream.str(), declaration.loc);
+    }
+
+    DictionaryField field;
+    field.evidence = std::move(term);
+    declaration.dictionaryFields.push_back(std::move(field));
+  }
+
+  for (auto &method : info.methods) {
+    DictionaryField field;
+
+    for (auto &provided : declaration.methods) {
+      if (provided->name != method.name)
+        continue;
+
+      field.method = provided.get();
+      break;
+    }
+
+    /* What the instance did not provide, the class did: every method was
+     * checked to be one or the other. */
+    if (!field.method)
+      field.defaultSymbol = sem::defaultMethodName(info.name, method.name);
+
+    declaration.dictionaryFields.push_back(std::move(field));
   }
 }
 
@@ -414,6 +576,21 @@ void Compiler::verifyEvidence() {
     throw ff::CompilerError("the dictionary " + *escaping.begin() +
                             " is used where nothing provides it");
 
+  for (auto &pair : globalDefs.defsClass) {
+    for (auto &method : pair.second->methods) {
+      if (!method->body)
+        continue;
+
+      std::set<std::string> used;
+      method->findEvidence(used);
+
+      if (!used.empty())
+        throw ff::CompilerError("the dictionary " + *used.begin() +
+                                    " is used where nothing provides it",
+                                method->loc);
+    }
+  }
+
   for (const sem::InstanceInfo *instance : classEnv.allInstances()) {
     for (auto &method : instance->declaration->methods) {
       std::set<std::string> used;
@@ -424,7 +601,7 @@ void Compiler::verifyEvidence() {
 
       if (!used.empty())
         throw ff::CompilerError("the dictionary " + *used.begin() +
-                                " is used where nothing provides it",
+                                    " is used where nothing provides it",
                                 method->loc);
     }
   }
@@ -439,16 +616,32 @@ void Compiler::printTypes() const {
 }
 
 void Compiler::translate() {
-  /* Dictionary passing is not built yet, so a program that declares a class
-   * typechecks but has nothing to run. Reported here rather than left to
-   * fail as a missing symbol further down. TODO: remove once instances are
-   * lowered. */
-  if (!classEnv.isEmpty())
-    throw ff::CompilerError(
-        "type classes are checked but not yet compiled; a program that "
-        "declares one cannot be built yet");
-
   globalDefs.translate(globalScope);
+
+  /* A default is a global of its own, named after the class and the method,
+   * which no program can write and so nothing can collide with. */
+  for (auto &pair : globalDefs.defsClass) {
+    auto &declaration = *pair.second;
+    for (auto &method : declaration.methods) {
+      if (!method->body)
+        continue;
+
+      method->visibility = sem::Visibility::Global;
+      method->mangledName =
+          sem::defaultMethodName(declaration.getName(), method->name);
+      method->translate(globalScope);
+    }
+  }
+
+  /* An instance method is reached through the dictionary it is a field of,
+   * never by name, so it is lifted like a local definition: it takes what it
+   * captured, which is whatever dictionaries the instance holds under. */
+  for (auto &instance : globalDefs.defsInstance) {
+    for (auto &method : instance->methods) {
+      method->visibility = sem::Visibility::Local;
+      method->translate(globalScope);
+    }
+  }
 }
 
 void Compiler::compile() {
@@ -458,6 +651,17 @@ void Compiler::compile() {
 
   for (auto *definition : globalScope.getDefinitions()) {
     compileDefinition(*definition);
+  }
+
+  for (auto &pair : globalDefs.defsClass) {
+    for (auto &method : pair.second->methods) {
+      if (method->body)
+        compileDefinition(*method);
+    }
+  }
+
+  for (auto &instance : globalDefs.defsInstance) {
+    instance->compile();
   }
 }
 
@@ -572,6 +776,13 @@ void Compiler::generateLLVM() {
     defData.second->generateLLVM(generator);
   }
 
+  /* A dictionary constructor and its selectors reach for nothing else, so
+   * they are declared and filled in together, ahead of anything that names
+   * one. */
+  for (auto &pair : globalDefs.defsClass) {
+    pair.second->generateLLVM(generator);
+  }
+
   /* Every function must be declared before any body is generated: a body
    * reaches its callees by name, and lifting mixes the two sets freely. */
   for (auto &defDefn : globalDefs.defsDefn) {
@@ -580,12 +791,30 @@ void Compiler::generateLLVM() {
   for (auto *definition : globalScope.getDefinitions()) {
     definition->declareLLVM(generator);
   }
+  for (auto &pair : globalDefs.defsClass) {
+    for (auto &method : pair.second->methods) {
+      if (method->body)
+        method->declareLLVM(generator);
+    }
+  }
+  for (auto &instance : globalDefs.defsInstance) {
+    instance->declareLLVM(generator);
+  }
 
   for (auto &defDefn : globalDefs.defsDefn) {
     defDefn.second->generateLLVM(generator);
   }
   for (auto *definition : globalScope.getDefinitions()) {
     definition->generateLLVM(generator);
+  }
+  for (auto &pair : globalDefs.defsClass) {
+    for (auto &method : pair.second->methods) {
+      if (method->body)
+        method->generateLLVM(generator);
+    }
+  }
+  for (auto &instance : globalDefs.defsInstance) {
+    instance->generateLLVM(generator);
   }
 
   generator.getModule().print(llvm::outs(), nullptr);

@@ -163,6 +163,11 @@ std::string instanceDictionaryName(const std::string &className,
   return className + generatedMarker + headName + generatedMarker + "inst";
 }
 
+std::string defaultMethodName(const std::string &className,
+                              const std::string &methodName) {
+  return className + generatedMarker + "default" + generatedMarker + methodName;
+}
+
 std::string dictionaryParamName(const std::string &className,
                                 std::size_t index) {
   return "d" + std::string(generatedMarker) + className +

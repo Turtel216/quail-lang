@@ -44,7 +44,12 @@ private:
         void parse();
         void dump();
         void buildClassEnv();
+        void typecheckDefaults();
         void typecheckInstances();
+        void layOutDictionary(const sem::InstanceInfo &instance,
+                              const sem::ClassInfo &info,
+                              const std::shared_ptr<sem::Type> &headType,
+                              const std::vector<sem::Given> &evidence);
         void resolveRemaining();
         void verifyEvidence();
         void printTypes() const;

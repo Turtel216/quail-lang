@@ -599,8 +599,32 @@ public:
     return this->head->className;
   }
 
+  /* One field per superclass, then one per method: the shape of the
+   * dictionary every instance of this class builds. */
+  inline std::size_t dictionaryArity() const noexcept {
+    return this->supers.size() + this->methods.size();
+  }
+
+  /* Emit the dictionary constructor and the selector that reaches each of
+   * its fields. Neither refers to anything else the compiler generates, so
+   * both are declared and filled in together. */
+  void generateLLVM(ff::cg::CodeGenerator &generator);
+
   void print(int indent, std::ostream &to) const;
   void printSource(std::ostream &to) const;
+};
+
+/* One field of the dictionary an instance builds. Exactly one of these says
+ * what goes in it. */
+class DictionaryField {
+public:
+  /* A superclass: evidence for what this instance's head is, at that class. */
+  std::shared_ptr<ff::sem::EvidenceTerm> evidence;
+  /* A method the instance implements, once lifted into a global of its own. */
+  DefinitionDefn *method = nullptr;
+  /* A method it does not, standing for the class's default applied to the
+   * dictionary being built. */
+  std::string defaultSymbol;
 };
 
 /* An instance declaration: what it claims, what it needs in order to claim
@@ -616,6 +640,14 @@ public:
    * order. The dictionary this instance builds is a function of them, and
    * its method bodies reach for them. */
   std::vector<std::string> dictionaryParams;
+  /* What goes in each field of the dictionary, in the order the class lays
+   * them out. */
+  std::vector<DictionaryField> dictionaryFields;
+  /* The symbol of the function that builds it. */
+  std::string mangledName;
+
+  std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+  llvm::Function *generatedFunction = nullptr;
 
   yy::location loc;
 
@@ -625,6 +657,10 @@ public:
                      yy::location lc = yy::location())
       : context(std::move(c)), head(std::move(h)), methods(std::move(ms)),
         loc(std::move(lc)) {}
+
+  void compile();
+  void declareLLVM(ff::cg::CodeGenerator &generator);
+  void generateLLVM(ff::cg::CodeGenerator &generator);
 
   void print(int indent, std::ostream &to) const;
   void printSource(std::ostream &to) const;
