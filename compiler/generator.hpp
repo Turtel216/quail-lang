@@ -8,6 +8,7 @@
 #include <llvm/IR/Module.h>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace ff {
 namespace cg {
@@ -16,9 +17,16 @@ private:
   struct CustomFunction {
     llvm::Function *function;
     std::int32_t arity;
+    /* Where the one node standing for this global lives, for a global that
+     * takes no arguments and so is a value rather than a function. Null for
+     * everything else, which is allocated afresh at every push. */
+    llvm::GlobalVariable *cafSlot = nullptr;
   };
 
   std::map<std::string, std::unique_ptr<CustomFunction>> customFunctions;
+  /* The globals given a slot, in the order they were given one, which is the
+   * order the initializer fills them in. */
+  std::vector<std::string> cafOrder;
   std::map<std::string, llvm::Function *> functions;
   std::map<std::string, llvm::StructType *> structTypes;
 
@@ -75,6 +83,16 @@ public:
   llvm::Value *createApp(llvm::Function *, llvm::Value *, llvm::Value *);
 
   llvm::Function *createCustomFunction(std::string name, int32_t arity);
+
+  /* Give `name` one node of its own, so that every push of it is the same
+   * node and forcing it once is forcing it for good. Only a global that
+   * takes no arguments may have one: it is the value that is shared, and
+   * one that takes arguments has no value until it has them. */
+  void markAsCaf(const std::string &name);
+  llvm::Value *createCafLoad(llvm::GlobalVariable *slot);
+
+  /* Fill in and register every slot. Called once, before the program runs. */
+  void createCafInitializer();
 };
 } // namespace cg
 } // namespace ff

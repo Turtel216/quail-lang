@@ -24,6 +24,13 @@ void PushGlobal::generate(cg::CodeGenerator &generator,
                           llvm::Function *f) const {
   auto &global = generator.getCustomFunction(name);
 
+  /* A shared global is one node for the whole program: pushing it is a load,
+   * and the update that forcing it leaves behind is seen by every push. */
+  if (global.cafSlot) {
+    generator.createPush(f, generator.createCafLoad(global.cafSlot));
+    return;
+  }
+
   auto arity = generator.createI32(global.arity);
   generator.createPush(f, generator.createGlobal(f, global.function, arity));
 }

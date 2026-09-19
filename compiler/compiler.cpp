@@ -801,6 +801,15 @@ void Compiler::generateLLVM() {
     instance->declareLLVM(generator);
   }
 
+  /* An instance that holds under nothing builds one dictionary, the same one
+   * every time, so it is allocated once and shared rather than rebuilt at
+   * every mention of it. Marked before any body is generated, since it is
+   * what a push of it compiles to that changes. */
+  for (auto &instance : globalDefs.defsInstance) {
+    if (instance->dictionaryParams.empty())
+      generator.markAsCaf(instance->mangledName);
+  }
+
   for (auto &defDefn : globalDefs.defsDefn) {
     defDefn.second->generateLLVM(generator);
   }
@@ -816,6 +825,17 @@ void Compiler::generateLLVM() {
   for (auto &instance : globalDefs.defsInstance) {
     instance->generateLLVM(generator);
   }
+
+  generator.createCafInitializer();
+
+  /* Everything the backend is about to be handed has to be well formed;
+   * a mistake in what was generated is worth catching here rather than as
+   * something inexplicable further down. */
+  std::string verifierMessage;
+  llvm::raw_string_ostream verifierStream(verifierMessage);
+  if (llvm::verifyModule(generator.getModule(), &verifierStream))
+    throw ff::CompilerError("the generated program is not well formed: " +
+                            verifierMessage);
 
   generator.getModule().print(llvm::outs(), nullptr);
 }
