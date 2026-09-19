@@ -16,6 +16,10 @@ void gmachine_init(struct gmachine *g) {
     node_vec_init(&g->remembered_set, 0);
     gc_state_init(&g->gc_state);
 
+    g->caf_roots.slots = NULL;
+    g->caf_roots.count = 0;
+    g->caf_roots.capacity = 0;
+
     g->gc_nodes = NULL;
     g->gc_node_count = 0;
     g->gc_node_threshold = GC_INITIAL_THRESHOLD;
@@ -32,6 +36,33 @@ void gmachine_free(struct gmachine *g) {
     node_vec_free(&g->remembered_set);
     gc_state_free(&g->gc_state);
     gc_free_all(g);
+
+    free(g->caf_roots.slots);
+    g->caf_roots.slots = NULL;
+    g->caf_roots.count = 0;
+    g->caf_roots.capacity = 0;
+}
+
+void gmachine_register_caf(struct gmachine *g, struct node_base **slot) {
+    struct caf_roots *roots = &g->caf_roots;
+
+    if (roots->count == roots->capacity) {
+        size_t capacity = roots->capacity == 0 ? 8 : roots->capacity * 2;
+        if (capacity > SIZE_MAX / sizeof *roots->slots) {
+            rt_fatal("too many static roots");
+        }
+
+        struct node_base ***grown =
+            realloc(roots->slots, capacity * sizeof *roots->slots);
+        if (grown == NULL) {
+            rt_oom("static roots");
+        }
+
+        roots->slots = grown;
+        roots->capacity = capacity;
+    }
+
+    roots->slots[roots->count++] = slot;
 }
 
 void gmachine_slide(struct gmachine *g, size_t n) {

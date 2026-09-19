@@ -9,11 +9,19 @@
  * generator as "f_main". */
 extern void f_main(struct gmachine *g);
 
+/* Fills in and registers the program's shared values.  Emitted by the code
+ * generator whether or not the program has any. */
+extern void quail_init_cafs(struct gmachine *g);
+
 int main(void) {
     struct gmachine g;
 
     /* Must come first: allocation needs the minor heap. */
     gmachine_init(&g);
+
+    /* Before anything is pushed, so that every reference to a shared value
+     * finds the one node standing for it. */
+    quail_init_cafs(&g);
 
     stack_push(&g.stack, (struct node_base *)alloc_global(&g, f_main, 0));
     unwind(&g);

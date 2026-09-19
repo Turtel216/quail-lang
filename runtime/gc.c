@@ -156,6 +156,13 @@ void minor_gc(struct gmachine *g) {
         roots[i] = evacuate(g, roots[i], &queue);
     }
 
+    /* Additional roots: the slots holding the program's constant values,
+     * which are reachable from nowhere else. */
+    for (size_t i = 0; i < g->caf_roots.count; i++) {
+        struct node_base **slot = g->caf_roots.slots[i];
+        *slot = evacuate(g, *slot, &queue);
+    }
+
     /* Additional roots: major-heap objects the mutator pointed back into the
      * minor heap since the last collection. */
     for (size_t i = 0; i < g->remembered_set.count; i++) {
@@ -293,6 +300,13 @@ static void gc_start_cycle(struct gmachine *g) {
     for (size_t i = 0; i < stack_count(&g->stack); i++) {
         if (node_is_white_ptr(roots[i])) {
             gc_grey(&g->gc_state, roots[i]);
+        }
+    }
+
+    for (size_t i = 0; i < g->caf_roots.count; i++) {
+        struct node_base *value = *g->caf_roots.slots[i];
+        if (node_is_white_ptr(value)) {
+            gc_grey(&g->gc_state, value);
         }
     }
 }
