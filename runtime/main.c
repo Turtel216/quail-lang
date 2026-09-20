@@ -4,6 +4,7 @@
 #include "gmachine.h"
 #include "heap.h"
 #include "stack.h"
+#include "stats.h"
 
 /* The compiled program's entry supercombinator, emitted by the code
  * generator as "f_main". */
@@ -29,6 +30,8 @@ int main(void) {
     (void)printf("Result: ");
     print_node(stdout, stack_pop(&g.stack));
     (void)putchar('\n');
+
+    rt_stats_report(stderr);
 
     gmachine_free(&g);
     return 0;

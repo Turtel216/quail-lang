@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "panic.h"
+#include "stats.h"
 
 /* Object count that triggers the first major GC cycle. */
 enum { GC_INITIAL_THRESHOLD = 128 };
@@ -108,6 +109,8 @@ void gmachine_alloc(struct gmachine *g, size_t o) {
 void gmachine_pack(struct gmachine *g, size_t n, int8_t t) {
     struct stack *s = &g->stack;
     assert(stack_count(s) >= n && "pack past bottom of stack");
+
+    rt_stats.packs++;
 
     /* Allocate before reading the stack: this may run a minor GC, which
      * relocates the field values and rewrites the slots holding them. */

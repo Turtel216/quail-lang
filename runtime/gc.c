@@ -8,6 +8,7 @@
 #include "heap.h"
 #include "panic.h"
 #include "stack.h"
+#include "stats.h"
 
 /* Work done per incremental major GC slice, in objects. */
 enum { GC_MARK_SLICE = 256, GC_SWEEP_SLICE = 256 };
@@ -147,6 +148,8 @@ static void gc_adopt_promoted(struct gmachine *g, struct node_vec *promoted) {
 }
 
 void minor_gc(struct gmachine *g) {
+    rt_stats.minor_collections++;
+
     struct node_vec queue;
     node_vec_init(&queue, 0);
 
