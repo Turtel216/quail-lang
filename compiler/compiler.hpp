@@ -7,8 +7,11 @@
 #include "file_manager.hpp"
 #include "generator.hpp"
 #include "types.hpp"
+#include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace ff {
   namespace drv {
@@ -34,6 +37,16 @@ private:
   int boolFalseTag = 0;
   DumpKind dumpKind;
 
+  /* Which instance each generated dictionary function belongs to, and what
+   * each selector selects, so that the optimizer can recognise a selection
+   * from a dictionary it can see the construction of. */
+  std::map<std::string, DefinitionInstance *> instancesBySymbol;
+  std::map<std::string, std::pair<std::string, std::string>> selectorsBySymbol;
+  /* The constant dictionaries the optimizer made, and the term each was made
+   * out of, so that two of the same term share one. */
+  std::vector<std::unique_ptr<DictionaryConstant>> dictionaryConstants;
+  std::map<std::string, std::string> dictionaryConstantsByTerm;
+
         void addDefaultTypes();
         void addListType();
         void addBinopType(binop op, std::shared_ptr<sem::Type> type);
@@ -52,6 +65,11 @@ private:
                               const std::vector<sem::Given> &evidence);
         void resolveRemaining();
         void verifyEvidence();
+        void optimizeEvidence();
+        /* Every evidence term in the program, whatever holds it. */
+        void forEachEvidenceSlot(
+            const std::function<void(std::shared_ptr<sem::EvidenceSlot> &)> &visit);
+        void forEachReference(const std::function<void(AstLid &)> &visit);
         void printTypes() const;
         void typecheck();
         void translate();

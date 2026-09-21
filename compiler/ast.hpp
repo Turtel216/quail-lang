@@ -9,6 +9,7 @@
 #include "generator.hpp"
 #include "graph_function.hpp"
 #include "instructions.hpp"
+#include <functional>
 #include <llvm/IR/Function.h>
 #include <location.hh>
 #include <map>
@@ -18,6 +19,7 @@
 #include <vector>
 
 class GlobalScope;
+class AstLid;
 
 class Ast {
 public:
@@ -48,6 +50,13 @@ public:
   virtual void
   generate(const std::shared_ptr<ff::ir::Enviroment> &env,
            std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const = 0;
+
+  /* Visit every reference to a name in this subtree. What a reference is
+   * applied to is settled once the whole program is elaborated, which is
+   * after the tree has stopped changing shape, so the optimizer revisits
+   * them rather than rewriting as it goes. */
+  virtual void
+  forEachReference(const std::function<void(AstLid &)> &visit) = 0;
 
   /* Collect the dictionaries this subtree reaches for but was not handed.
    * Runs after elaboration and mirrors findFree: each construct that takes
@@ -133,6 +142,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+
   void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
@@ -166,6 +177,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+
   void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
@@ -191,6 +204,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+
   void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
@@ -219,6 +234,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -250,6 +267,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+
   void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
@@ -277,6 +296,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+
   void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
@@ -309,6 +330,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+
   void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
@@ -340,6 +363,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+
   void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
@@ -370,6 +395,8 @@ public:
                 std::set<std::string> &into) override;
 
   void translate(GlobalScope &scope) override;
+
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -407,6 +434,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -531,6 +560,7 @@ public: // TODO: Fix encapsulation
   /* Gather what the body reaches for and the definition was not handed, so
    * that lambda lifting knows to capture it. */
   void findEvidence(std::set<std::string> &into);
+  void forEachReference(const std::function<void(AstLid &)> &visit);
 
   void print(int indent, std::ostream &to) const;
   /* `keyword` is what introduces the definition in the source. A class method
@@ -666,6 +696,25 @@ public:
   void printSource(std::ostream &to) const;
 };
 
+/* A dictionary that depends on nothing, given a name of its own so that the
+ * whole program shares one. The optimizer makes these out of the dictionary
+ * constructions it finds being rebuilt where they need not be. */
+class DictionaryConstant {
+public:
+  std::string mangledName;
+  std::shared_ptr<ff::sem::EvidenceTerm> term;
+
+  std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+  llvm::Function *generatedFunction = nullptr;
+
+  DictionaryConstant(std::string n, std::shared_ptr<ff::sem::EvidenceTerm> t)
+      : mangledName(std::move(n)), term(std::move(t)) {}
+
+  void compile();
+  void declareLLVM(ff::cg::CodeGenerator &generator);
+  void generateLLVM(ff::cg::CodeGenerator &generator);
+};
+
 /* The second of two methods written under the same name, or null when every
  * method in the list is written once. */
 const DefinitionDefn *findDuplicateMethod(
@@ -756,6 +805,8 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+
   void findEvidence(std::set<std::string> &into) override;
 
   void print(int indent, std::ostream &to) const override;
@@ -792,6 +843,8 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void forEachReference(const std::function<void(AstLid &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 

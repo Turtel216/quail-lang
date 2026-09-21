@@ -5,8 +5,8 @@
 #include "error.hpp"
 #include "parse_driver.hpp"
 #include "types.hpp"
-#include <cassert>
 #include <algorithm>
+#include <cassert>
 #include <cstdlib>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
@@ -22,8 +22,8 @@
  * Keep in sync with the contents of runtime/ -- runtime.h documents how the
  * pieces fit together. */
 static const char *const runtimeSources[] = {
-    "eval.c", "gc.c",    "gmachine.c", "heap.c",
-    "main.c", "panic.c", "stack.c",    "vec.c",
+    "eval.c",  "gc.c",    "gmachine.c", "heap.c", "main.c",
+    "panic.c", "stack.c", "stats.c",    "vec.c",
 };
 
 /* Definitions every program gets for free, parsed ahead of the source file
@@ -32,7 +32,7 @@ static const char *const preludePath = "prelude/Base.ql";
 
 /* The operators that answer with a Bool rather than an Int. They are set up
  * apart from the arithmetic ones because Bool comes from the prelude. */
-static constexpr binop comparisonOps[] = {EQUALS,  NOTEQUALS, LESS,
+static constexpr binop comparisonOps[] = {EQUALS,  NOTEQUALS,  LESS,
                                           GREATER, LESSEQUALS, GREATEREQUALS};
 
 namespace ff {
@@ -615,6 +615,280 @@ void Compiler::printTypes() const {
   }
 }
 
+/*
+ * Two rewrites, both on the evidence a use was told to hand over, and both
+ * turning on the same thing: whether the dictionary being selected from is
+ * one whose construction is written right there.
+ *
+ * Known dictionary:
+ * Selecting from a construction is the field itself. A
+ * superclass becomes the evidence that instance was
+ * built with, and a method becomes a direct reference
+ * to the function implementing it, so the dictionary
+ * need not be built at all.
+ *
+ * Constant sharing:
+ * A dictionary that reaches for nothing is the same
+ * dictionary everywhere, so it is given a name of its
+ * own and built once for the program rather than
+ * wherever it is mentioned, which for a mention inside
+ * a loop is once per iteration.
+ *
+ * Both run after lifting, since what a method is called and what it captured
+ * are only settled then. Nothing here can introduce a dictionary a definition
+ * was not already reaching for: every term either shrinks or is replaced by
+ * one of its own subterms.
+ */
+
+namespace {
+
+bool isClosed(const sem::EvidenceTerm &term) {
+  if (term.parameter)
+    return false;
+
+  for (auto &argument : term.arguments) {
+    if (!isClosed(*argument))
+      return false;
+  }
+  return true;
+}
+
+std::string termKey(const sem::EvidenceTerm &term) {
+  std::ostringstream stream;
+  term.print(stream);
+  return stream.str();
+}
+
+/* A term with the dictionaries an instance holds under put in place of the
+ * parameters standing for them. */
+std::shared_ptr<sem::EvidenceTerm>
+substituteTerm(const sem::EvidenceTerm &term,
+               const std::vector<std::string> &params,
+               const std::vector<std::shared_ptr<sem::EvidenceTerm>> &args) {
+  if (term.parameter) {
+    for (std::size_t i = 0; i < params.size(); i++) {
+      if (params[i] == term.name) {
+        /* An instance is only ever applied to as many dictionaries as it
+         * holds under. */
+        assert(i < args.size());
+        return args[i];
+      }
+    }
+    return sem::EvidenceTerm::ofParameter(term.name);
+  }
+
+  std::vector<std::shared_ptr<sem::EvidenceTerm>> rewritten;
+  for (auto &argument : term.arguments)
+    rewritten.push_back(substituteTerm(*argument, params, args));
+
+  return sem::EvidenceTerm::ofApplication(term.name, std::move(rewritten));
+}
+
+} // namespace
+
+void Compiler::forEachReference(const std::function<void(AstLid &)> &visit) {
+  for (auto &pair : globalDefs.defsDefn)
+    pair.second->forEachReference(visit);
+  for (auto *definition : globalScope.getDefinitions())
+    definition->forEachReference(visit);
+  for (auto &pair : globalDefs.defsClass) {
+    for (auto &method : pair.second->methods) {
+      if (method->body)
+        method->forEachReference(visit);
+    }
+  }
+}
+
+void Compiler::forEachEvidenceSlot(
+    const std::function<void(std::shared_ptr<sem::EvidenceSlot> &)> &visit) {
+  forEachReference([&](AstLid &reference) {
+    for (auto &slot : reference.evidence)
+      visit(slot);
+  });
+}
+
+void Compiler::optimizeEvidence() {
+  for (auto &instance : globalDefs.defsInstance)
+    instancesBySymbol[instance->mangledName] = instance.get();
+
+  for (auto &pair : globalDefs.defsClass) {
+    auto &declaration = *pair.second;
+    for (auto &super : declaration.supers)
+      selectorsBySymbol[sem::superSelectorName(
+          declaration.getName(), super->className)] = {declaration.getName(),
+                                                       super->className};
+    for (auto &method : declaration.methods)
+      selectorsBySymbol[sem::methodSelectorName(
+          declaration.getName(), method->name)] = {declaration.getName(),
+                                                   method->name};
+  }
+
+  /* A selection from a dictionary whose construction is right there is the
+   * field itself. Applied from the inside out, so that a selection from a
+   * selection is folded once the inner one has been. */
+  std::function<std::shared_ptr<sem::EvidenceTerm>(const sem::EvidenceTerm &)>
+      fold = [&](const sem::EvidenceTerm &term)
+      -> std::shared_ptr<sem::EvidenceTerm> {
+    if (term.parameter)
+      return sem::EvidenceTerm::ofParameter(term.name);
+
+    std::vector<std::shared_ptr<sem::EvidenceTerm>> arguments;
+    for (auto &argument : term.arguments)
+      arguments.push_back(fold(*argument));
+
+    auto rebuilt =
+        sem::EvidenceTerm::ofApplication(term.name, std::move(arguments));
+
+    auto selector = selectorsBySymbol.find(term.name);
+    if (selector == selectorsBySymbol.end() || rebuilt->arguments.size() != 1)
+      return rebuilt;
+
+    auto instanceIt = instancesBySymbol.find(rebuilt->arguments.front()->name);
+    if (instanceIt == instancesBySymbol.end())
+      return rebuilt;
+
+    auto &instance = *instanceIt->second;
+    if (instance.head->className != selector->second.first)
+      return rebuilt;
+
+    const sem::ClassInfo *info = classEnv.lookup(instance.head->className);
+    assert(info != nullptr);
+
+    /* The fields are the superclasses in order, then the methods in order,
+     * which is what the selector was named after. */
+    for (std::size_t i = 0; i < info->supers.size(); i++) {
+      if (info->supers[i].className != selector->second.second)
+        continue;
+
+      return substituteTerm(*instance.dictionaryFields[i].evidence,
+                            instance.dictionaryParams,
+                            rebuilt->arguments.front()->arguments);
+    }
+
+    return rebuilt;
+  };
+
+  forEachEvidenceSlot([&](std::shared_ptr<sem::EvidenceSlot> &slot) {
+    assert(slot->term != nullptr);
+    slot->term = fold(*slot->term);
+  });
+
+  for (auto &instance : globalDefs.defsInstance) {
+    for (auto &field : instance->dictionaryFields) {
+      if (field.evidence)
+        field.evidence = fold(*field.evidence);
+    }
+  }
+
+  /* A method taken out of a dictionary whose construction is right there is
+   * the function implementing it, called directly. The dictionary is then
+   * needed only for whatever the implementation captured, which is a subset
+   * of what the dictionary was built from. */
+  forEachReference([&](AstLid &reference) {
+    if (reference.lifted || reference.evidence.size() != 1)
+      return;
+
+    auto variable = reference.typeContext->lookup(reference.id);
+    if (!variable || variable->visibility != sem::Visibility::Global ||
+        !variable->mangledName)
+      return;
+
+    auto selector = selectorsBySymbol.find(*variable->mangledName);
+    if (selector == selectorsBySymbol.end())
+      return;
+
+    /* Held on to, because the slot it lives in is about to be replaced. */
+    auto term = reference.evidence.front()->term;
+    auto instanceIt = instancesBySymbol.find(term->name);
+    if (instanceIt == instancesBySymbol.end())
+      return;
+
+    auto &instance = *instanceIt->second;
+    if (instance.head->className != selector->second.first)
+      return;
+
+    const sem::ClassInfo *info = classEnv.lookup(instance.head->className);
+    assert(info != nullptr);
+
+    for (std::size_t i = 0; i < info->methods.size(); i++) {
+      if (info->methods[i].name != selector->second.second)
+        continue;
+
+      auto &field = instance.dictionaryFields[info->supers.size() + i];
+      /* A method the instance left to the class's default is reached through
+       * the dictionary the default was handed, which is the dictionary
+       * itself, so there is nothing to shortcut. */
+      if (!field.method)
+        return;
+
+      reference.id = field.method->mangledName;
+      reference.lifted = true;
+      reference.evidence.clear();
+
+      /* The implementation takes what it captured, in the order lifting
+       * prepended it, and each of those is one of the dictionaries the
+       * instance was applied to. */
+      for (auto &captured : field.method->capturedVariables) {
+        auto argument =
+            substituteTerm(*sem::EvidenceTerm::ofParameter(captured),
+                           instance.dictionaryParams, term->arguments);
+
+        std::shared_ptr<sem::EvidenceSlot> slot(new sem::EvidenceSlot());
+        slot->term = std::move(argument);
+        reference.evidence.push_back(std::move(slot));
+      }
+      return;
+    }
+  });
+
+  /* A dictionary that reaches for nothing is the same dictionary wherever it
+   * is written, so one of them is made and shared. Applied from the inside
+   * out, so that the largest constant part of a term is the one named. */
+  std::function<std::shared_ptr<sem::EvidenceTerm>(const sem::EvidenceTerm &)>
+      intern = [&](const sem::EvidenceTerm &term)
+      -> std::shared_ptr<sem::EvidenceTerm> {
+    if (term.parameter)
+      return sem::EvidenceTerm::ofParameter(term.name);
+
+    if (isClosed(term)) {
+      /* Already one node for the program: a ground instance's dictionary, or
+       * a constant some other term was made to share. */
+      if (term.arguments.empty())
+        return sem::EvidenceTerm::ofApplication(term.name, {});
+
+      auto key = termKey(term);
+      auto known = dictionaryConstantsByTerm.find(key);
+      if (known == dictionaryConstantsByTerm.end()) {
+        std::string symbol = std::string("dict") + sem::generatedMarker +
+                             std::to_string(dictionaryConstants.size());
+        dictionaryConstants.push_back(std::unique_ptr<DictionaryConstant>(
+            new DictionaryConstant(symbol, sem::EvidenceTerm::ofApplication(
+                                               term.name, term.arguments))));
+        known = dictionaryConstantsByTerm.emplace(key, symbol).first;
+      }
+
+      return sem::EvidenceTerm::ofApplication(known->second, {});
+    }
+
+    std::vector<std::shared_ptr<sem::EvidenceTerm>> arguments;
+    for (auto &argument : term.arguments)
+      arguments.push_back(intern(*argument));
+
+    return sem::EvidenceTerm::ofApplication(term.name, std::move(arguments));
+  };
+
+  forEachEvidenceSlot([&](std::shared_ptr<sem::EvidenceSlot> &slot) {
+    slot->term = intern(*slot->term);
+  });
+
+  for (auto &instance : globalDefs.defsInstance) {
+    for (auto &field : instance->dictionaryFields) {
+      if (field.evidence)
+        field.evidence = intern(*field.evidence);
+    }
+  }
+}
+
 void Compiler::translate() {
   globalDefs.translate(globalScope);
 
@@ -663,6 +937,10 @@ void Compiler::compile() {
   for (auto &instance : globalDefs.defsInstance) {
     instance->compile();
   }
+
+  for (auto &constant : dictionaryConstants) {
+    constant->compile();
+  }
 }
 
 void Compiler::compileDefinition(DefinitionDefn &definition) {
@@ -673,8 +951,8 @@ Compiler::Compiler(const std::string &input, const std::string &output,
                    DumpKind dump)
     : fileManager(), globalDefs(), globalContext(new sem::TypeContext),
       classEnv(), mangler(), manager(), globalScope(mangler), generator(),
-      inputFile(input),
-      outputFile(output), objectFile("object.o"), dumpKind(dump) {
+      inputFile(input), outputFile(output), objectFile("object.o"),
+      dumpKind(dump) {
   addDefaultTypes();
   addDefaultFunctionTypes();
 }
@@ -723,9 +1001,9 @@ void Compiler::createLLVMBinop(binop op) {
 }
 
 void Compiler::createLLVMComparison(binop op) {
-  createLLVMOperator(op, std::unique_ptr<ff::ir::Instruction>(
-                             new ff::ir::Compare(op, boolTrueTag,
-                                                 boolFalseTag)));
+  createLLVMOperator(op,
+                     std::unique_ptr<ff::ir::Instruction>(
+                         new ff::ir::Compare(op, boolTrueTag, boolFalseTag)));
 }
 
 /* The supercombinator behind the composition operator, which is what a
@@ -800,6 +1078,9 @@ void Compiler::generateLLVM() {
   for (auto &instance : globalDefs.defsInstance) {
     instance->declareLLVM(generator);
   }
+  for (auto &constant : dictionaryConstants) {
+    constant->declareLLVM(generator);
+  }
 
   /* An instance that holds under nothing builds one dictionary, the same one
    * every time, so it is allocated once and shared rather than rebuilt at
@@ -808,6 +1089,9 @@ void Compiler::generateLLVM() {
   for (auto &instance : globalDefs.defsInstance) {
     if (instance->dictionaryParams.empty())
       generator.markAsCaf(instance->mangledName);
+  }
+  for (auto &constant : dictionaryConstants) {
+    generator.markAsCaf(constant->mangledName);
   }
 
   for (auto &defDefn : globalDefs.defsDefn) {
@@ -824,6 +1108,9 @@ void Compiler::generateLLVM() {
   }
   for (auto &instance : globalDefs.defsInstance) {
     instance->generateLLVM(generator);
+  }
+  for (auto &constant : dictionaryConstants) {
+    constant->generateLLVM(generator);
   }
 
   generator.createCafInitializer();
@@ -902,6 +1189,7 @@ void Compiler::operator()() {
   }
 
   translate();
+  optimizeEvidence();
   compile();
   generateLLVM();
   outputLLVM();

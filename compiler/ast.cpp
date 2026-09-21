@@ -1728,6 +1728,38 @@ void DefinitionInstance::compile() {
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(arity)));
 }
 
+/* A constant dictionary is a global of no arguments, which is to say a
+ * value: built the first time it is looked at, and shared from then on. */
+void DictionaryConstant::compile() {
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Alloc(1)));
+
+  auto env = std::shared_ptr<ff::ir::Enviroment>(
+      new ff::ir::EnviromentOffset(0, nullptr));
+
+  /* The term reaches for no dictionary of its own, which is what makes it a
+   * constant, so there is nothing for the environment to resolve. */
+  generateEvidence(*term, env, instructions);
+
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(0)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Update(0)));
+  instructions.push_back(
+      std::unique_ptr<ff::ir::Instruction>(new ff::ir::Pop(0)));
+}
+
+void DictionaryConstant::declareLLVM(ff::cg::CodeGenerator &generator) {
+  generatedFunction = generator.createCustomFunction(mangledName, 0);
+}
+
+void DictionaryConstant::generateLLVM(ff::cg::CodeGenerator &generator) {
+  generator.getBuilder().SetInsertPoint(&generatedFunction->getEntryBlock());
+  for (auto &instruction : instructions)
+    instruction->generate(generator, generatedFunction);
+  generator.getBuilder().CreateRetVoid();
+}
+
 void DefinitionInstance::declareLLVM(ff::cg::CodeGenerator &generator) {
   generatedFunction =
       generator.createCustomFunction(mangledName, dictionaryParams.size());
@@ -1827,6 +1859,86 @@ void DefinitionDefn::findEvidence(std::set<std::string> &into) {
 void DefinitionGroup::findEvidence(std::set<std::string> &into) {
   for (auto &pair : defsDefn)
     pair.second->findEvidence(into);
+}
+
+// ############ Visiting references ############
+
+/* What a reference is applied to is only settled once the whole program has
+ * been elaborated and lifted, so the optimizer comes back to the references
+ * rather than rewriting each as it is made. A construct that has already
+ * given its subtree away visits what it kept. */
+
+void AstInt::forEachReference(const std::function<void(AstLid &)> &) {}
+
+void AstLid::forEachReference(const std::function<void(AstLid &)> &visit) {
+  visit(*this);
+}
+
+void AstUid::forEachReference(const std::function<void(AstLid &)> &) {}
+
+void AstList::forEachReference(const std::function<void(AstLid &)> &visit) {
+  for (auto &item : items)
+    item->forEachReference(visit);
+}
+
+void AstBinop::forEachReference(const std::function<void(AstLid &)> &visit) {
+  left->forEachReference(visit);
+  right->forEachReference(visit);
+}
+
+void AstApp::forEachReference(const std::function<void(AstLid &)> &visit) {
+  left->forEachReference(visit);
+  right->forEachReference(visit);
+}
+
+void AstPipe::forEachReference(const std::function<void(AstLid &)> &visit) {
+  value->forEachReference(visit);
+  function->forEachReference(visit);
+}
+
+void AstCompose::forEachReference(const std::function<void(AstLid &)> &visit) {
+  left->forEachReference(visit);
+  right->forEachReference(visit);
+}
+
+void AstCase::forEachReference(const std::function<void(AstLid &)> &visit) {
+  of->forEachReference(visit);
+  for (auto &branch : branches)
+    branch->expr->forEachReference(visit);
+}
+
+void AstIf::forEachReference(const std::function<void(AstLid &)> &visit) {
+  condition->forEachReference(visit);
+  thenBranch->forEachReference(visit);
+  elseBranch->forEachReference(visit);
+}
+
+/* Once lifted, the body belongs to the global it became, which is visited
+ * where the lifted definitions are. What is left here is the application
+ * that stands in for it. */
+void AstLambda::forEachReference(const std::function<void(AstLid &)> &visit) {
+  if (body)
+    body->forEachReference(visit);
+  if (translated)
+    translated->forEachReference(visit);
+}
+
+void AstLet::forEachReference(const std::function<void(AstLid &)> &visit) {
+  if (bindings.empty()) {
+    for (auto &pair : definitions->defsDefn)
+      pair.second->forEachReference(visit);
+  }
+
+  for (auto &binding : bindings)
+    binding.value->forEachReference(visit);
+
+  in->forEachReference(visit);
+}
+
+void DefinitionDefn::forEachReference(
+    const std::function<void(AstLid &)> &visit) {
+  if (body)
+    body->forEachReference(visit);
 }
 
 // ############ Source printing ############
