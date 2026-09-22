@@ -174,6 +174,10 @@ std::string dictionaryParamName(const std::string &className,
          std::string(generatedMarker) + std::to_string(index);
 }
 
+std::string hiddenMethodName(const std::string &methodName) {
+  return std::string("m") + generatedMarker + methodName;
+}
+
 std::shared_ptr<EvidenceTerm> EvidenceTerm::ofParameter(std::string name) {
   return std::shared_ptr<EvidenceTerm>(
       new EvidenceTerm(std::move(name), true, {}));
@@ -208,8 +212,10 @@ void EvidenceTerm::print(std::ostream &to) const {
 }
 
 void TypeManager::want(Pred pred, const yy::location &loc,
+                       std::string provenance,
                        std::shared_ptr<EvidenceSlot> slot) {
-  this->wanted.push_back(Wanted(std::move(pred), loc, std::move(slot)));
+  this->wanted.push_back(
+      Wanted(std::move(pred), loc, std::move(provenance), std::move(slot)));
 }
 
 void TypeManager::want(Wanted wanted) {
@@ -233,7 +239,8 @@ std::vector<Wanted> TypeManager::takeWantedFrom(std::size_t mark) {
 
 std::shared_ptr<Type> TypeScheme::instantiate(
     TypeManager &mgr, const yy::location &loc,
-    std::vector<std::shared_ptr<EvidenceSlot>> *slots) const {
+    std::vector<std::shared_ptr<EvidenceSlot>> *slots,
+    const std::string &provenance) const {
   /* One slot per constraint, handed to the manager with the constraint and
    * kept by the use, so that solving the constraint tells the use what to
    * apply itself to. */
@@ -243,7 +250,7 @@ std::shared_ptr<Type> TypeScheme::instantiate(
       slot = std::shared_ptr<EvidenceSlot>(new EvidenceSlot());
       slots->push_back(slot);
     }
-    mgr.want(std::move(pred), loc, std::move(slot));
+    mgr.want(std::move(pred), loc, provenance, std::move(slot));
   };
 
   if (forall.size() == 0) {
@@ -398,6 +405,31 @@ std::string structuralKey(const TypeManager &mgr,
     return base->getName();
 
   return "?";
+}
+
+bool isNumeric(const TypeManager &mgr, const std::shared_ptr<Type> &type) {
+  TypeVar *var;
+  auto resolved = mgr.resolve(type, var);
+
+  if (!var) {
+    auto *app = dynamic_cast<TypeApp *>(resolved.get());
+    if (!app)
+      return false;
+    auto *base = dynamic_cast<TypeBase *>(app->constructor.get());
+    return base && base->getName() == intTypeName;
+  }
+
+  for (auto &one : mgr.getWanted()) {
+    if (one.pred.className != numClassName)
+      continue;
+
+    TypeVar *about;
+    mgr.resolve(one.pred.type, about);
+    if (about && about->getName() == var->getName())
+      return true;
+  }
+
+  return false;
 }
 
 void printReadable(const TypeManager &mgr, const Pred &pred, TypeNamer &namer,

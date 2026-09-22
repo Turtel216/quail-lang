@@ -55,8 +55,7 @@ public:
    * applied to is settled once the whole program is elaborated, which is
    * after the tree has stopped changing shape, so the optimizer revisits
    * them rather than rewriting as it goes. */
-  virtual void
-  forEachReference(const std::function<void(AstLid &)> &visit) = 0;
+  virtual void forEachNode(const std::function<void(Ast &)> &visit) = 0;
 
   /* Collect the dictionaries this subtree reaches for but was not handed.
    * Runs after elaboration and mirrors findFree: each construct that takes
@@ -123,40 +122,15 @@ public:
       : name(std::move(_name)), types(std::move(_types)) {}
 };
 
-class AstInt : public Ast {
-public:
-  int value;
-
-  explicit AstInt(int v, yy::location lc = yy::location())
-      : Ast(std::move(lc)), value(v) {}
-
-  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
-
-  void findFree(ff::sem::TypeManager &mgr,
-                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
-                std::set<std::string> &into) override;
-
-  void translate(GlobalScope &scope) override;
-
-  void generate(
-      const std::shared_ptr<ff::ir::Enviroment> &env,
-      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
-
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
-
-  void findEvidence(std::set<std::string> &into) override;
-
-  void print(int indent, std::ostream &to) const override;
-
-  void printSource(std::ostream &to) const override;
-};
-
 class AstLid : public Ast {
 public:
   std::string id;
   /* Set on the references left behind by lambda lifting, whose id is already
    * the symbol of a global rather than a name the surrounding scope binds. */
   bool lifted;
+  /* How to describe this use when a constraint it took on cannot be
+   * answered. Empty for an ordinary name, whose own spelling says it. */
+  std::string provenance;
   /* One slot per constraint the name holds under, in the order the name
    * takes its dictionaries in. Filled in when the binding group around this
    * use is solved, and applied to the name at code generation. */
@@ -177,7 +151,7 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -185,6 +159,42 @@ public:
 
   void printSource(std::ostream &to) const override;
 };
+
+class AstInt : public Ast {
+public:
+  int value;
+  /* A written number stands for whatever type it is used at, so it means the
+   * class method that turns one into that type, applied to the number. This
+   * is the reference to that method, and it carries the constraint. */
+  std::unique_ptr<AstLid> fromInt;
+  /* Set when the type it stands for turned out to be the machine number, in
+   * which case there is nothing to convert. */
+  bool primitive = false;
+
+  explicit AstInt(int v, yy::location lc = yy::location())
+      : Ast(std::move(lc)), value(v) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
+
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
+
+  void translate(GlobalScope &scope) override;
+
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
+  void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
+};
+
 
 class AstUid : public Ast {
 public:
@@ -204,7 +214,7 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -235,7 +245,7 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -249,6 +259,10 @@ public:
   binop op;
   std::unique_ptr<Ast> left;
   std::unique_ptr<Ast> right;
+  /* An operator is surface syntax for a method, so this is the reference to
+   * it, carrying whatever constraint the method carries. The node stays one
+   * of its own so that a mistake in an operand can be named as such. */
+  std::unique_ptr<AstLid> function;
 
   AstBinop(binop _op, std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs,
            yy::location lc = yy::location())
@@ -267,7 +281,7 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -296,7 +310,7 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -330,7 +344,7 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -363,7 +377,7 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -396,7 +410,7 @@ public:
 
   void translate(GlobalScope &scope) override;
 
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -435,7 +449,7 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -560,7 +574,7 @@ public: // TODO: Fix encapsulation
   /* Gather what the body reaches for and the definition was not handed, so
    * that lambda lifting knows to capture it. */
   void findEvidence(std::set<std::string> &into);
-  void forEachReference(const std::function<void(AstLid &)> &visit);
+  void forEachNode(const std::function<void(Ast &)> &visit);
 
   void print(int indent, std::ostream &to) const;
   /* `keyword` is what introduces the definition in the source. A class method
@@ -805,7 +819,7 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 
@@ -844,7 +858,7 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
-  void forEachReference(const std::function<void(AstLid &)> &visit) override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
 
   void findEvidence(std::set<std::string> &into) override;
 

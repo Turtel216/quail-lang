@@ -120,33 +120,35 @@ resolveAnnotation(ff::sem::TypeManager &mgr, const ff::sem::ParsedType &parsed,
   return mgr.substitute(vars.fresh, parsed.toType(vars.written, typeCtx, loc));
 }
 
-/* Report an operand whose type is already known to be one the operator
- * cannot take. Unification would notice it too, but only as two types that
- * did not fit, without saying which side of the operator went wrong. */
-void checkOperand(ff::sem::TypeManager &mgr, const char *side, binop op,
-                  const std::shared_ptr<ff::sem::Type> &expected,
-                  const Ast &operand,
-                  const std::shared_ptr<ff::sem::Type> &actual) {
-  ff::sem::TypeVar *var;
-  auto resolved = mgr.resolve(actual, var);
+/* Two operands whose types are both known and different. Unification would
+ * notice it too, but only as two types that did not fit, without saying that
+ * an operator takes both of its operands at one type. */
+void checkOperands(ff::sem::TypeManager &mgr, binop op, const Ast &binop,
+                   const std::shared_ptr<ff::sem::Type> &left,
+                   const std::shared_ptr<ff::sem::Type> &right) {
+  ff::sem::TypeVar *leftVar;
+  ff::sem::TypeVar *rightVar;
+  auto resolvedLeft = mgr.resolve(left, leftVar);
+  auto resolvedRight = mgr.resolve(right, rightVar);
 
-  /* A type still open here may yet turn out to fit. */
-  if (var)
+  /* A type still open here may yet turn out to be the other. */
+  if (leftVar || rightVar)
     return;
 
-  auto *expectedApp = dynamic_cast<ff::sem::TypeApp *>(expected.get());
-  auto *resolvedApp = dynamic_cast<ff::sem::TypeApp *>(resolved.get());
-  if (!expectedApp ||
-      (resolvedApp && resolvedApp->constructor == expectedApp->constructor))
+  auto *leftApp = dynamic_cast<ff::sem::TypeApp *>(resolvedLeft.get());
+  auto *rightApp = dynamic_cast<ff::sem::TypeApp *>(resolvedRight.get());
+  if (!leftApp || !rightApp ||
+      leftApp->constructor == rightApp->constructor)
     return;
 
+  ff::sem::TypeNamer namer;
   std::ostringstream errorStream;
-  errorStream << "the " << side << " operand of " << opName(op) << " is not ";
-  expectedApp->constructor->print(mgr, errorStream);
-  errorStream << ", its type is ";
-  resolved->print(mgr, errorStream);
+  errorStream << "the operands of " << opName(op) << " have different types, ";
+  ff::sem::printReadable(mgr, resolvedLeft, namer, errorStream);
+  errorStream << " and ";
+  ff::sem::printReadable(mgr, resolvedRight, namer, errorStream);
 
-  throw ff::TypeError(errorStream.str(), operand.loc);
+  throw ff::TypeError(errorStream.str(), binop.loc);
 }
 
 /* One side of a composition is resolved. A side already known not to be a
@@ -158,8 +160,21 @@ resolveComposed(ff::sem::TypeManager &mgr, const char *side, const Ast &operand,
   ff::sem::TypeVar *var;
   auto resolved = mgr.resolve(type, var);
 
+  if (dynamic_cast<ff::sem::TypeArr *>(resolved.get()))
+    return resolved;
+
+  /* A written number is an open type that some constraint says is a number,
+   * which is worth saying rather than leaving to the constraint to report
+   * from wherever it is finally answered. */
+  if (ff::sem::isNumeric(mgr, resolved)) {
+    std::ostringstream errorStream;
+    errorStream << "the " << side
+                << " side of . is not a function, it is a number";
+    throw ff::TypeError(errorStream.str(), operand.loc);
+  }
+
   /* A type still open here may yet turn out to be a function. */
-  if (var || dynamic_cast<ff::sem::TypeArr *>(resolved.get()))
+  if (var)
     return resolved;
 
   std::ostringstream errorStream;
@@ -180,15 +195,23 @@ std::string ambiguityMessage(ff::sem::TypeManager &mgr, const std::string &var,
               << " is ambiguous: nothing that uses this can say what it is, "
                  "and it is constrained by";
 
+  std::string provenance;
+  bool first = true;
   for (auto &one : retained) {
     std::set<std::string> predVars;
     mgr.findFree(one.pred.type, predVars);
     if (predVars.find(var) == predVars.end())
       continue;
 
-    errorStream << " ";
+    errorStream << (first ? " " : ", ");
+    first = false;
     ff::sem::printReadable(mgr, one.pred, namer, errorStream);
+    if (provenance.empty())
+      provenance = one.provenance;
   }
+
+  if (!provenance.empty())
+    errorStream << ", arising from " << provenance;
 
   return errorStream.str();
 }
@@ -203,8 +226,10 @@ std::string notEntailedMessage(ff::sem::TypeManager &mgr,
   ff::sem::printReadable(mgr, pred, namer, errorStream);
   errorStream << ", which the declared context";
 
+  bool first = true;
   for (auto &one : declared) {
-    errorStream << " ";
+    errorStream << (first ? " " : ", ");
+    first = false;
     ff::sem::printReadable(mgr, one, namer, errorStream);
   }
   errorStream << " does not provide";
@@ -222,21 +247,35 @@ void checkComposedTypes(ff::sem::TypeManager &mgr, const Ast &compose,
   ff::sem::TypeVar *handedBackVar;
   auto resolvedTaken = mgr.resolve(taken, takenVar);
   auto resolvedHandedBack = mgr.resolve(handedBack, handedBackVar);
-  if (takenVar || handedBackVar)
+
+  bool takesNumber = ff::sem::isNumeric(mgr, resolvedTaken);
+  bool handsNumber = ff::sem::isNumeric(mgr, resolvedHandedBack);
+  if ((takenVar && !takesNumber) || (handedBackVar && !handsNumber))
     return;
 
   auto *takenApp = dynamic_cast<ff::sem::TypeApp *>(resolvedTaken.get());
   auto *handedBackApp =
       dynamic_cast<ff::sem::TypeApp *>(resolvedHandedBack.get());
-  if (!takenApp || !handedBackApp ||
-      takenApp->constructor == handedBackApp->constructor)
+
+  if (takesNumber && handsNumber)
+    return;
+  if (!takesNumber && !handsNumber &&
+      (!takenApp || !handedBackApp ||
+       takenApp->constructor == handedBackApp->constructor))
     return;
 
+  ff::sem::TypeNamer namer;
   std::ostringstream errorStream;
   errorStream << "the left side of . takes ";
-  resolvedTaken->print(mgr, errorStream);
+  if (takesNumber)
+    errorStream << "a number";
+  else
+    ff::sem::printReadable(mgr, resolvedTaken, namer, errorStream);
   errorStream << ", but the right side of . hands back ";
-  resolvedHandedBack->print(mgr, errorStream);
+  if (handsNumber)
+    errorStream << "a number";
+  else
+    ff::sem::printReadable(mgr, resolvedHandedBack, namer, errorStream);
 
   throw ff::TypeError(errorStream.str(), compose.loc);
 }
@@ -245,15 +284,32 @@ void checkComposedTypes(ff::sem::TypeManager &mgr, const Ast &compose,
 
 // ############ Asts ############
 
-void AstInt::findFree(ff::sem::TypeManager &,
+void AstInt::findFree(ff::sem::TypeManager &mgr,
                       std::shared_ptr<ff::sem::TypeContext> &typeCtx,
-                      std::set<std::string> &) {
+                      std::set<std::string> &into) {
   this->typeContext = typeCtx;
+
+  /* A written number stands for whatever type it is used at, which is what
+   * the class method that makes one says. */
+  fromInt = std::unique_ptr<AstLid>(
+      new AstLid(ff::sem::hiddenMethodName(ff::sem::fromIntName), loc));
+  fromInt->provenance = "a written number";
+  fromInt->findFree(mgr, typeCtx, into);
 }
 
-std::shared_ptr<ff::sem::Type> AstInt::typecheck(ff::sem::TypeManager &) {
-  return std::shared_ptr<ff::sem::Type>(
-      new ff::sem::TypeApp(typeContext->lookupType("Int")));
+std::shared_ptr<ff::sem::Type> AstInt::typecheck(ff::sem::TypeManager &mgr) {
+  auto machineType = std::shared_ptr<ff::sem::Type>(
+      new ff::sem::TypeApp(typeContext->lookupType(ff::sem::intTypeName)));
+
+  auto functionType = fromInt->typecheck(mgr);
+  auto result = mgr.newType();
+
+  mgr.unify(functionType,
+            std::shared_ptr<ff::sem::Type>(
+                new ff::sem::TypeArr(std::move(machineType), result)),
+            loc);
+
+  return result;
 }
 
 void AstInt::translate(GlobalScope &) {}
@@ -266,10 +322,20 @@ void AstLid::findFree(ff::sem::TypeManager &,
 }
 
 void AstInt::generate(
-    const std::shared_ptr<ff::ir::Enviroment> &,
+    const std::shared_ptr<ff::ir::Enviroment> &env,
     std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const {
   into.push_back(
       std::unique_ptr<ff::ir::Instruction>(new ff::ir::PushInt(this->value)));
+
+  /* At the machine type there is nothing to convert: the instance for it
+   * hands back the number it was given. */
+  if (primitive)
+    return;
+
+  fromInt->generate(std::shared_ptr<ff::ir::Enviroment>(
+                        new ff::ir::EnviromentOffset(1, env)),
+                    into);
+  into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
 }
 
 void AstInt::print(int indent, std::ostream &to) const {
@@ -286,7 +352,9 @@ std::shared_ptr<ff::sem::Type> AstLid::typecheck(ff::sem::TypeManager &mgr) {
    * inside the name's own group finds nothing to hold under yet, and is
    * told what it passes along once the group is generalized. */
   variable->uses.push_back(&evidence);
-  return variable->scheme->instantiate(mgr, loc, &evidence);
+  return variable->scheme->instantiate(
+      mgr, loc, &evidence,
+      provenance.empty() ? "a use of " + id : provenance);
 }
 
 void AstLid::translate(GlobalScope &) {}
@@ -425,21 +493,13 @@ void AstList::print(int indent, std::ostream &to) const {
 std::shared_ptr<ff::sem::Type> AstBinop::typecheck(ff::sem::TypeManager &mgr) {
   auto ltype = left->typecheck(mgr);
   auto rtype = right->typecheck(mgr);
-  auto opVariable = typeContext->lookup(opName(op));
-  if (!opVariable)
-    throw ff::TypeError(std::string("unknown binary operator ") + opName(op),
-                        loc);
 
-  auto ftype = opVariable->scheme->instantiate(mgr, loc);
+  auto ftype = function->typecheck(mgr);
 
-  /* Every operator takes two operands of a type it fixes itself, so the
-   * types it expects can be read straight off it and blamed one at a time. */
-  if (auto *firstArrow = dynamic_cast<ff::sem::TypeArr *>(ftype.get())) {
-    checkOperand(mgr, "left", op, firstArrow->getLeft(), *left, ltype);
-    if (auto *secondArrow =
-            dynamic_cast<ff::sem::TypeArr *>(firstArrow->getRight().get()))
-      checkOperand(mgr, "right", op, secondArrow->getLeft(), *right, rtype);
-  }
+  /* An operator takes both operands at one type, whatever that turns out to
+   * be, so two that are already known to differ is the mistake worth naming
+   * rather than whichever pair of pieces unification reaches first. */
+  checkOperands(mgr, op, *this, ltype, rtype);
 
   auto returnType = mgr.newType();
   auto arrowOne =
@@ -455,6 +515,14 @@ void AstBinop::findFree(ff::sem::TypeManager &mgr,
                         std::shared_ptr<ff::sem::TypeContext> &typeCtx,
                         std::set<std::string> &into) {
   this->typeContext = typeCtx;
+
+  /* An operator is surface syntax for a method, and a use of a method is a
+   * use of a name like any other. */
+  function = std::unique_ptr<AstLid>(
+      new AstLid(ff::sem::hiddenMethodName(opMethod(op)), loc));
+  function->provenance = "a use of " + opName(op);
+  function->findFree(mgr, typeCtx, into);
+
   left->findFree(mgr, typeCtx, into);
   right->findFree(mgr, typeCtx, into);
 }
@@ -472,8 +540,9 @@ void AstBinop::generate(
       std::shared_ptr<ff::ir::Enviroment>(new ff::ir::EnviromentOffset(1, env)),
       into);
 
-  into.push_back(std::unique_ptr<ff::ir::Instruction>(
-      new ff::ir::PushGlobal(this->typeContext->getMangledName(opName(op)))));
+  this->function->generate(std::shared_ptr<ff::ir::Enviroment>(
+                               new ff::ir::EnviromentOffset(2, env)),
+                           into);
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
   into.push_back(std::unique_ptr<ff::ir::Instruction>(new ff::ir::MkApp()));
 }
@@ -536,12 +605,19 @@ std::shared_ptr<ff::sem::Type> AstPipe::typecheck(ff::sem::TypeManager &mgr) {
    * program never wrote. */
   ff::sem::TypeVar *var;
   auto resolved = mgr.resolve(functionType, var);
-  if (!var && !dynamic_cast<ff::sem::TypeArr *>(resolved.get())) {
-    std::ostringstream errorStream;
-    errorStream << "the right side of |> is not a function, its type is ";
-    resolved->print(mgr, errorStream);
+  if (!dynamic_cast<ff::sem::TypeArr *>(resolved.get())) {
+    if (ff::sem::isNumeric(mgr, resolved))
+      throw ff::TypeError(
+          "the right side of |> is not a function, it is a number",
+          function->loc);
 
-    throw ff::TypeError(errorStream.str(), function->loc);
+    if (!var) {
+      std::ostringstream errorStream;
+      errorStream << "the right side of |> is not a function, its type is ";
+      resolved->print(mgr, errorStream);
+
+      throw ff::TypeError(errorStream.str(), function->loc);
+    }
   }
 
   auto returnType = mgr.newType();
@@ -803,6 +879,12 @@ std::shared_ptr<ff::sem::Type> AstIf::typecheck(ff::sem::TypeManager &mgr) {
    * away */
   ff::sem::TypeVar *var;
   auto resolved = mgr.resolve(conditionType, var);
+  if (ff::sem::isNumeric(mgr, resolved))
+    throw ff::TypeError(std::string("the condition of an if expression is "
+                                    "not a ") +
+                            ff::sem::boolTypeName + ", it is a number",
+                        condition->loc);
+
   auto *resolvedApp = dynamic_cast<ff::sem::TypeApp *>(resolved.get());
   if (!var && (!resolvedApp || resolvedApp->constructor.get() != boolData)) {
     std::ostringstream errorStream;
@@ -1780,7 +1862,10 @@ void DefinitionInstance::generateLLVM(ff::cg::CodeGenerator &generator) {
  * without having been handed it, because that is what lambda lifting must
  * capture. */
 
-void AstInt::findEvidence(std::set<std::string> &) {}
+void AstInt::findEvidence(std::set<std::string> &into) {
+  if (fromInt)
+    fromInt->findEvidence(into);
+}
 
 void AstLid::findEvidence(std::set<std::string> &into) {
   for (auto &slot : evidence) {
@@ -1798,6 +1883,8 @@ void AstList::findEvidence(std::set<std::string> &into) {
 }
 
 void AstBinop::findEvidence(std::set<std::string> &into) {
+  if (function)
+    function->findEvidence(into);
   left->findEvidence(into);
   right->findEvidence(into);
 }
@@ -1861,84 +1948,98 @@ void DefinitionGroup::findEvidence(std::set<std::string> &into) {
     pair.second->findEvidence(into);
 }
 
-// ############ Visiting references ############
+// ############ Visiting the tree ############
 
 /* What a reference is applied to is only settled once the whole program has
- * been elaborated and lifted, so the optimizer comes back to the references
- * rather than rewriting each as it is made. A construct that has already
+ * been elaborated and lifted, so the optimizer comes back over the tree
+ * rather than rewriting each use as it is made. A construct that has already
  * given its subtree away visits what it kept. */
 
-void AstInt::forEachReference(const std::function<void(AstLid &)> &) {}
+void AstInt::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
+  if (fromInt)
+    fromInt->forEachNode(visit);
+}
 
-void AstLid::forEachReference(const std::function<void(AstLid &)> &visit) {
+void AstLid::forEachNode(const std::function<void(Ast &)> &visit) {
   visit(*this);
 }
 
-void AstUid::forEachReference(const std::function<void(AstLid &)> &) {}
+void AstUid::forEachNode(const std::function<void(Ast &)> &visit) { visit(*this); }
 
-void AstList::forEachReference(const std::function<void(AstLid &)> &visit) {
+void AstList::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
   for (auto &item : items)
-    item->forEachReference(visit);
+    item->forEachNode(visit);
 }
 
-void AstBinop::forEachReference(const std::function<void(AstLid &)> &visit) {
-  left->forEachReference(visit);
-  right->forEachReference(visit);
+void AstBinop::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
+  if (function)
+    function->forEachNode(visit);
+  left->forEachNode(visit);
+  right->forEachNode(visit);
 }
 
-void AstApp::forEachReference(const std::function<void(AstLid &)> &visit) {
-  left->forEachReference(visit);
-  right->forEachReference(visit);
+void AstApp::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
+  left->forEachNode(visit);
+  right->forEachNode(visit);
 }
 
-void AstPipe::forEachReference(const std::function<void(AstLid &)> &visit) {
-  value->forEachReference(visit);
-  function->forEachReference(visit);
+void AstPipe::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
+  value->forEachNode(visit);
+  function->forEachNode(visit);
 }
 
-void AstCompose::forEachReference(const std::function<void(AstLid &)> &visit) {
-  left->forEachReference(visit);
-  right->forEachReference(visit);
+void AstCompose::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
+  left->forEachNode(visit);
+  right->forEachNode(visit);
 }
 
-void AstCase::forEachReference(const std::function<void(AstLid &)> &visit) {
-  of->forEachReference(visit);
+void AstCase::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
+  of->forEachNode(visit);
   for (auto &branch : branches)
-    branch->expr->forEachReference(visit);
+    branch->expr->forEachNode(visit);
 }
 
-void AstIf::forEachReference(const std::function<void(AstLid &)> &visit) {
-  condition->forEachReference(visit);
-  thenBranch->forEachReference(visit);
-  elseBranch->forEachReference(visit);
+void AstIf::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
+  condition->forEachNode(visit);
+  thenBranch->forEachNode(visit);
+  elseBranch->forEachNode(visit);
 }
 
 /* Once lifted, the body belongs to the global it became, which is visited
  * where the lifted definitions are. What is left here is the application
  * that stands in for it. */
-void AstLambda::forEachReference(const std::function<void(AstLid &)> &visit) {
+void AstLambda::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
   if (body)
-    body->forEachReference(visit);
+    body->forEachNode(visit);
   if (translated)
-    translated->forEachReference(visit);
+    translated->forEachNode(visit);
 }
 
-void AstLet::forEachReference(const std::function<void(AstLid &)> &visit) {
+void AstLet::forEachNode(const std::function<void(Ast &)> &visit) {
+  visit(*this);
   if (bindings.empty()) {
     for (auto &pair : definitions->defsDefn)
-      pair.second->forEachReference(visit);
+      pair.second->forEachNode(visit);
   }
 
   for (auto &binding : bindings)
-    binding.value->forEachReference(visit);
+    binding.value->forEachNode(visit);
 
-  in->forEachReference(visit);
+  in->forEachNode(visit);
 }
 
-void DefinitionDefn::forEachReference(
-    const std::function<void(AstLid &)> &visit) {
+void DefinitionDefn::forEachNode(const std::function<void(Ast &)> &visit) {
   if (body)
-    body->forEachReference(visit);
+    body->forEachNode(visit);
 }
 
 // ############ Source printing ############

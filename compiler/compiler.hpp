@@ -69,6 +69,7 @@ private:
         /* Every evidence term in the program, whatever holds it. */
         void forEachEvidenceSlot(
             const std::function<void(std::shared_ptr<sem::EvidenceSlot> &)> &visit);
+        void forEachNode(const std::function<void(Ast &)> &visit);
         void forEachReference(const std::function<void(AstLid &)> &visit);
         void printTypes() const;
         void typecheck();

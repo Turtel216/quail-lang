@@ -149,7 +149,8 @@ public:
    * anything constructor headed with the context of the instance that
    * answers it. Throws when nothing does. */
   std::vector<Pred> toHnf(TypeManager &mgr, const Pred &pred,
-                          const yy::location &loc) const;
+                          const yy::location &loc,
+                          const std::string &provenance = "") const;
 
   /* Drop every constraint the others already answer for. Each keeps the
    * place it came from, so what is left can still be reported against the

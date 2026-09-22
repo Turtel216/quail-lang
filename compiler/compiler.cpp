@@ -79,11 +79,15 @@ void Compiler::addListType() {
                       sem::Visibility::Global);
 }
 
+/* The compiler's own implementation of an operator, bound under a name the
+ * prelude's instance for Int can call. The operator itself is surface syntax
+ * for a method, and means whatever that method means. */
 void Compiler::addBinopType(binop op, std::shared_ptr<sem::Type> type) {
   auto name = mangler.newMangledName(opAction(op));
 
-  globalContext->bind(opName(op), std::move(type), sem::Visibility::Global);
-  globalContext->setMangledName(opName(op), name);
+  globalContext->bind(opPrimitive(op), std::move(type),
+                      sem::Visibility::Global);
+  globalContext->setMangledName(opPrimitive(op), name);
 }
 
 void Compiler::addDefaultFunctionTypes() {
@@ -238,8 +242,19 @@ void Compiler::typecheck() {
   /* Nothing encloses the top level, so anything still free here that is not
    * already bound -- a constructor, an operator -- has no definition. */
   for (auto &free : freeVariables) {
-    if (globalContext->lookup(free) == nullptr)
-      throw ff::TypeError("undefined variable " + free);
+    if (globalContext->lookup(free) != nullptr)
+      continue;
+
+    /* A name nothing can write is one the compiler asked for on a program's
+     * behalf: an operator, or a written number, needing the class that says
+     * what it means. */
+    if (free.find(sem::generatedMarker) != std::string::npos)
+      throw ff::TypeError("an operator or a written number needs the class "
+                          "declaring " +
+                          free.substr(free.rfind(sem::generatedMarker) + 1) +
+                          ", which the prelude did not provide");
+
+    throw ff::TypeError("undefined variable " + free);
   }
 
   globalDefs.typecheck(manager);
@@ -686,17 +701,24 @@ substituteTerm(const sem::EvidenceTerm &term,
 
 } // namespace
 
-void Compiler::forEachReference(const std::function<void(AstLid &)> &visit) {
+void Compiler::forEachNode(const std::function<void(Ast &)> &visit) {
   for (auto &pair : globalDefs.defsDefn)
-    pair.second->forEachReference(visit);
+    pair.second->forEachNode(visit);
   for (auto *definition : globalScope.getDefinitions())
-    definition->forEachReference(visit);
+    definition->forEachNode(visit);
   for (auto &pair : globalDefs.defsClass) {
     for (auto &method : pair.second->methods) {
       if (method->body)
-        method->forEachReference(visit);
+        method->forEachNode(visit);
     }
   }
+}
+
+void Compiler::forEachReference(const std::function<void(AstLid &)> &visit) {
+  forEachNode([&](Ast &node) {
+    if (auto *reference = dynamic_cast<AstLid *>(&node))
+      visit(*reference);
+  });
 }
 
 void Compiler::forEachEvidenceSlot(
@@ -710,6 +732,25 @@ void Compiler::forEachEvidenceSlot(
 void Compiler::optimizeEvidence() {
   for (auto &instance : globalDefs.defsInstance)
     instancesBySymbol[instance->mangledName] = instance.get();
+
+  /* A written number at the machine type is the machine number: the
+   * instance for it hands back what it was given, so the call that would
+   * convert it is not made at all. Done before the folding below, while the
+   * evidence still names the instance. */
+  auto machineNumbers =
+      sem::instanceDictionaryName(sem::numClassName, sem::intTypeName);
+  if (instancesBySymbol.find(machineNumbers) != instancesBySymbol.end()) {
+    forEachNode([&](Ast &node) {
+      auto *literal = dynamic_cast<AstInt *>(&node);
+      if (!literal || !literal->fromInt ||
+          literal->fromInt->evidence.size() != 1)
+        return;
+
+      auto &term = *literal->fromInt->evidence.front()->term;
+      if (term.arguments.empty() && term.name == machineNumbers)
+        literal->primitive = true;
+    });
+  }
 
   for (auto &pair : globalDefs.defsClass) {
     auto &declaration = *pair.second;
@@ -962,7 +1003,7 @@ Compiler::Compiler(const std::string &input, const std::string &output,
 void Compiler::createLLVMOperator(
     binop op, std::unique_ptr<ff::ir::Instruction> operation) {
   auto newFunction = generator.createCustomFunction(
-      globalContext->getMangledName(opName(op)), 2);
+      globalContext->getMangledName(opPrimitive(op)), 2);
 
   std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
   instructions.push_back(

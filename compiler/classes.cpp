@@ -521,11 +521,18 @@ void ClassEnv::bindMethods(TypeContext &typeCtx) const {
       scheme->context.push_back(
           Pred(info.name, std::shared_ptr<Type>(new TypeVar(info.var))));
 
-      typeCtx.bind(method.name, std::move(scheme), Visibility::Global);
+      auto selector = methodSelectorName(info.name, method.name);
+
+      typeCtx.bind(method.name, scheme, Visibility::Global);
       /* A use of a method is a push of the selector that takes it out of a
        * dictionary, applied to the dictionary the use was told to hand it. */
-      typeCtx.setMangledName(method.name,
-                             methodSelectorName(info.name, method.name));
+      typeCtx.setMangledName(method.name, selector);
+
+      /* The same method again, under a name nothing can take, which is what
+       * an operator standing for it uses. */
+      typeCtx.bind(hiddenMethodName(method.name), std::move(scheme),
+                   Visibility::Global);
+      typeCtx.setMangledName(hiddenMethodName(method.name), selector);
     }
   }
 }
@@ -722,7 +729,8 @@ bool ClassEnv::entail(TypeManager &mgr, const std::vector<Pred> &given,
 }
 
 std::vector<Pred> ClassEnv::toHnf(TypeManager &mgr, const Pred &pred,
-                                  const yy::location &loc) const {
+                                  const yy::location &loc,
+                                  const std::string &provenance) const {
   if (inHnf(mgr, pred))
     return {pred};
 
@@ -732,12 +740,14 @@ std::vector<Pred> ClassEnv::toHnf(TypeManager &mgr, const Pred &pred,
     std::ostringstream stream;
     stream << "no instance for ";
     printReadable(mgr, pred, namer, stream);
+    if (!provenance.empty())
+      stream << ", arising from " << provenance;
     throw ff::TypeError(stream.str(), loc);
   }
 
   std::vector<Pred> reduced;
   for (auto &contextPred : *context) {
-    for (auto &deeper : toHnf(mgr, contextPred, loc))
+    for (auto &deeper : toHnf(mgr, contextPred, loc, provenance))
       reduced.push_back(std::move(deeper));
   }
   return reduced;
@@ -773,8 +783,8 @@ std::vector<Wanted> ClassEnv::reduce(TypeManager &mgr,
     if (entail(mgr, given, one.pred))
       continue;
 
-    for (auto &pred : toHnf(mgr, one.pred, one.loc))
-      reduced.push_back(Wanted(std::move(pred), one.loc));
+    for (auto &pred : toHnf(mgr, one.pred, one.loc, one.provenance))
+      reduced.push_back(Wanted(std::move(pred), one.loc, one.provenance));
   }
 
   return simplify(mgr, std::move(reduced));

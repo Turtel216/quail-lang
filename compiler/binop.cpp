@@ -52,6 +52,38 @@ std::string opAction(binop op) {
   return "??";
 }
 
+std::string opMethod(binop op) {
+  switch (op) {
+  case PLUS:
+    return "add";
+  case MINUS:
+    return "sub";
+  case TIMES:
+    return "mul";
+  case DIVIDE:
+    return "div";
+  case EQUALS:
+    return "eq";
+  case NOTEQUALS:
+    return "neq";
+  case LESS:
+    return "lt";
+  case LESSEQUALS:
+    return "le";
+  case GREATER:
+    return "gt";
+  case GREATEREQUALS:
+    return "ge";
+  }
+  return "??";
+}
+
+std::string opPrimitive(binop op) {
+  std::string name = opMethod(op);
+  name[0] = (char)('A' + (name[0] - 'a'));
+  return "prim" + name;
+}
+
 bool isComparison(binop op) {
   switch (op) {
   case EQUALS:

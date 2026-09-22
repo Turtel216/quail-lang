@@ -39,6 +39,12 @@ inline constexpr const char *composeAction = "compose";
  * order they are tried. Named here because both inference and the class
  * environment have to agree on what counts as numeric. */
 inline constexpr const char *numClassName = "Num";
+/* The method that turns a written number into whatever type it stands for,
+ * and the type a number stands for when nothing says otherwise. A literal at
+ * that type is the machine number itself: the prelude's instance for it
+ * hands back what it was given, so there is nothing to call. */
+inline constexpr const char *fromIntName = "fromInt";
+inline constexpr const char *intTypeName = "Int";
 
 /* Names for the things a class and its instances are compiled into. The
  * marker cannot appear in an identifier the lexer will produce, so none of
@@ -61,6 +67,11 @@ std::string defaultMethodName(const std::string &className,
  * definition holds under, in the canonical order. */
 std::string dictionaryParamName(const std::string &className,
                                 std::size_t index);
+/* A second name for a method, which no program can write. An operator means
+ * a method, and has to go on meaning it even where something else has taken
+ * the method's own name: `fun add x y = { x * y }` is a definition of add,
+ * not a redefinition of +. */
+std::string hiddenMethodName(const std::string &methodName);
 
 class TypeManager;
 class ClassEnv;
@@ -212,12 +223,19 @@ class Wanted {
 public:
   Pred pred;
   yy::location loc;
+  /* What took the constraint on, in the words a reader would use for it: a
+   * use of a name, an operator, a written number. Reported alongside a
+   * constraint nothing can answer, since the place alone does not say which
+   * part of the line is responsible. */
+  std::string provenance;
   /* Null for a constraint nothing is waiting on the answer to, which is
    * every constraint a pattern or a constructor could take on. */
   std::shared_ptr<EvidenceSlot> slot;
 
-  Wanted(Pred p, yy::location l, std::shared_ptr<EvidenceSlot> s = nullptr)
-      : pred(std::move(p)), loc(std::move(l)), slot(std::move(s)) {}
+  Wanted(Pred p, yy::location l, std::string prov = "",
+         std::shared_ptr<EvidenceSlot> s = nullptr)
+      : pred(std::move(p)), loc(std::move(l)), provenance(std::move(prov)),
+        slot(std::move(s)) {}
 };
 
 class TypeManager {
@@ -252,9 +270,12 @@ public:
 
   inline int getLastId() const noexcept { return this->lastId; }
 
-  void want(Pred pred, const yy::location &loc,
+  void want(Pred pred, const yy::location &loc, std::string provenance,
             std::shared_ptr<EvidenceSlot> slot = nullptr);
   void want(Wanted wanted);
+  inline const std::vector<Wanted> &getWanted() const noexcept {
+    return this->wanted;
+  }
   /* Where the wanted set currently ends, so that everything a binding group
    * goes on to want can be taken back off in one piece. */
   std::size_t wantedMark() const noexcept;
@@ -286,7 +307,8 @@ public:
    * against it. */
   std::shared_ptr<Type>
   instantiate(TypeManager &mgr, const yy::location &loc,
-              std::vector<std::shared_ptr<EvidenceSlot>> *slots = nullptr) const;
+              std::vector<std::shared_ptr<EvidenceSlot>> *slots = nullptr,
+              const std::string &provenance = "") const;
 };
 
 /* Short, stable names for the variables of a type being written out. A type
@@ -314,5 +336,11 @@ void printReadable(const TypeManager &mgr, const TypeScheme &scheme,
  * to a reader but come out the same on every run of a given program. */
 std::string structuralKey(const TypeManager &mgr,
                           const std::shared_ptr<Type> &type);
+
+/* Whether `type` is a number: either the machine one, or a variable that
+ * some constraint still to be answered says must be one. A written number
+ * starts out as the second, which is why a construct expecting something
+ * else has to ask rather than look. */
+bool isNumeric(const TypeManager &mgr, const std::shared_ptr<Type> &type);
 } // namespace sem
 } // namespace ff
