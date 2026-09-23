@@ -7,5 +7,4 @@ fun isBig n = { n > 10 }
 fun main = { (inc . isBig) 1 }
 
 // CHECK: an error occured while checking the types of the program
-// CHECK-SAME: the left side of . takes Int
-// CHECK-SAME: but the right side of . hands back Bool
+// CHECK-SAME: the left side of . takes a number, but the right side of . hands back Bool

@@ -3,5 +3,4 @@
 fun main = { if 1 < True { 1 } else { 0 } }
 
 // CHECK: an error occured while checking the types of the program
-// CHECK-SAME: the right operand of < is not Int
-// CHECK-SAME: its type is Bool
+// CHECK-SAME: no instance for Num Bool, arising from a written number
