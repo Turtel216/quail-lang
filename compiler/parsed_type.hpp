@@ -3,7 +3,10 @@
 #include "context.hpp"
 #include "types.hpp"
 #include <location.hh>
+#include <ostream>
 #include <set>
+#include <string>
+#include <vector>
 
 namespace ff {
 namespace sem {
@@ -22,6 +25,9 @@ public:
    * over the ones it writes, so they have to be gathered before any part of
    * it is turned into a type. */
   virtual void collectVariables(std::set<std::string> &into) const = 0;
+
+  /* Write the type back out as the source that would parse to it again. */
+  virtual void printSource(std::ostream &to) const = 0;
 };
 
 class ParsedTypeApp : public ParsedType {
@@ -38,6 +44,8 @@ public:
                                const yy::location &loc) const override;
 
   void collectVariables(std::set<std::string> &into) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class ParsedTypeVar : public ParsedType {
@@ -51,6 +59,8 @@ public:
                                const yy::location &loc) const override;
 
   void collectVariables(std::set<std::string> &into) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class ParsedTypeArr : public ParsedType {
@@ -67,6 +77,34 @@ public:
                                const yy::location &loc) const override;
 
   void collectVariables(std::set<std::string> &into) const override;
+
+  void printSource(std::ostream &to) const override;
 };
+
+/* One constraint as the program wrote it: a class name and the type it is
+ * claimed about. It stays unresolved until the class environment is built,
+ * so that a class named before it is declared is still an ordinary forward
+ * reference. */
+class ParsedPred {
+public:
+  std::string className;
+  std::vector<std::unique_ptr<ParsedType>> arguments;
+  yy::location loc;
+
+  ParsedPred(std::string _className,
+             std::vector<std::unique_ptr<ParsedType>> _arguments,
+             yy::location lc = yy::location())
+      : className(std::move(_className)), arguments(std::move(_arguments)),
+        loc(std::move(lc)) {}
+
+  void collectVariables(std::set<std::string> &into) const;
+  void printSource(std::ostream &to) const;
+};
+
+/* A written context, as it appears to the left of a =>. Empty when the
+ * definition it belongs to did not write one. */
+using ParsedContext = std::vector<std::unique_ptr<ParsedPred>>;
+
+void printContextSource(const ParsedContext &context, std::ostream &to);
 } // namespace sem
 } // namespace ff

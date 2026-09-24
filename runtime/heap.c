@@ -1,5 +1,7 @@
 #include "heap.h"
 
+#include "stats.h"
+
 #include <assert.h>
 #include <stdlib.h>
 
@@ -85,6 +87,7 @@ struct node_app *alloc_app(struct gmachine *g, struct node_base *l,
     struct node_app *node =
         (struct node_app *)alloc_protecting(g, sizeof *node, roots, 2);
 
+    rt_stats.apps++;
     node->base.header = hdr_make(NODE_APP, GC_WHITE, WORDS_NODE_APP);
     node->left = roots[0];
     node->right = roots[1];
@@ -97,6 +100,7 @@ struct node_global *alloc_global(struct gmachine *g,
     struct node_global *node =
         (struct node_global *)alloc_protecting(g, sizeof *node, NULL, 0);
 
+    rt_stats.globals++;
     node->base.header = hdr_make(NODE_GLOBAL, GC_WHITE, WORDS_NODE_GLOBAL);
     node->function = f;
     node->arity = a;
@@ -109,6 +113,7 @@ struct node_ind *alloc_ind(struct gmachine *g, struct node_base *n) {
     struct node_ind *node =
         (struct node_ind *)alloc_protecting(g, sizeof *node, roots, 1);
 
+    rt_stats.inds++;
     node->base.header = hdr_make(NODE_IND, GC_WHITE, WORDS_NODE_IND);
     node->next = roots[0];
     return node;

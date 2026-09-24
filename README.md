@@ -15,7 +15,9 @@ The Quail toolchain includes `qc`, an Ahead-of-Time (AOT) compiler written in C+
 * **Pattern Matching:** Expressive `match ... with` syntax for destructing Algebraic Data Types (ADTs).
 * **Optional Annotations:** A parameter or a return type may be written out, one at a time; what is left off is inferred as before.
 * **Conditionals:** An `if ... else` expression that branches on a `Bool`.
-* **Comparisons:** The operators `==`, `!=`, `>`, `<`, `>=` and `<=` weigh two `Int`s against each other and answer with a `Bool`.
+* **Type Classes:** `class` and `instance` declarations, with superclasses, default methods and inferred contexts, compiled by dictionary passing.
+* **Comparisons:** The operators `==`, `!=`, `>`, `<`, `>=` and `<=` are methods of `Eq` and `Ord`, so they weigh any two values of a type that has an instance.
+* **Overloaded Arithmetic:** `+`, `-`, `*` and `/` are methods of `Num`, and a written number stands for whatever type it is used at.
 * **Built-in Lists:** A primitive `List` type with bracket syntax (`[1, 2, 3]`) for literals.
 * **Pipelines:** A `|>` operator that reads a chain of calls front to back.
 * **Composition:** A `.` operator that builds one function out of two, the way Haskell's does.
@@ -27,10 +29,11 @@ The Quail toolchain includes `qc`, an Ahead-of-Time (AOT) compiler written in C+
 The Quail compiler (`qc`) operates through the following pipeline:
 
 1. **Frontend:** Lexing and Parsing (via Flex and Bison) into an Abstract Syntax Tree (AST).
-2. **Semantic Analysis:** Hindley-Milner type inference resolves and validates types.
-3. **Lowering:** The AST is transformed into G-Machine instructions for lazy evaluation graph reduction.
-4. **Backend:** G-Machine instructions are lowered to LLVM IR.
-5. **Code Generation:** LLVM optimizes the IR and compiles it into a native executable, linking it against the Quail C runtime (which handles graph allocation, garbage collection, and I/O).
+2. **Semantic Analysis:** Hindley-Milner type inference resolves and validates types, extended with qualified types so that a definition may hold under a class constraint.
+3. **Elaboration:** Constraints are solved and each use of an overloaded name is applied to the dictionary that answers it.
+4. **Lowering:** The AST is transformed into G-Machine instructions for lazy evaluation graph reduction. A class becomes a data type of one constructor with a selector per field; an instance becomes the function that builds it.
+5. **Backend:** G-Machine instructions are lowered to LLVM IR.
+6. **Code Generation:** LLVM optimizes the IR and compiles it into a native executable, linking it against the Quail C runtime (which handles graph allocation, garbage collection, and I/O).
 
 ## Syntax Overview
 
@@ -252,6 +255,150 @@ later, or built out of functions whose types are not yet fixed.
 fun twice f = { f . f }
 ```
 
+### Type Classes
+
+A `class` says what a type has to provide, and an `instance` provides it for
+one type. A class abstracts over exactly one type variable:
+
+```quail
+class Show a = {
+    fun show (x: a) : Int
+}
+
+instance Show Int = {
+    fun show x = { x }
+}
+```
+
+Every method signature has to be written out in full, and has to mention the
+variable the class is about. A method may carry a body as well, which is the
+default an instance gets when it does not write its own:
+
+```quail
+class Eq a = {
+    fun eq (x: a) (y: a) : Bool
+    fun neq (x: a) (y: a) : Bool = { not (eq x y) }
+}
+```
+
+A class may require that an instance of it is already an instance of another,
+which is written the way a constraint is. A method may then use the
+superclass's methods:
+
+```quail
+class Eq a => Ord a = {
+    fun lt (x: a) (y: a) : Bool
+    fun le (x: a) (y: a) : Bool = { if lt x y { True } else { eq x y } }
+}
+```
+
+An instance may itself hold only under a constraint. Its head is a type
+constructor applied to distinct type variables, and its context says what
+those variables must be:
+
+```quail
+instance Eq a => Eq (List a) = {
+    fun eq xs ys = {
+        match xs with {
+            Nil -> { match ys with { Nil -> { True } Cons y r -> { False } } }
+            Cons x r -> {
+                match ys with {
+                    Nil -> { False }
+                    Cons y s -> { if eq x y { eq r s } else { False } }
+                }
+            }
+        }
+    }
+}
+```
+
+### Constraints on definitions
+
+A definition that uses a method holds under whatever that method needs, and
+inference works out what:
+
+```quail
+fun member x xs = {
+    match xs with {
+        Nil -> { False }
+        Cons y ys -> { if eq x y { True } else { member x ys } }
+    }
+}
+```
+
+```
+member : Eq a => a -> List a -> Bool
+```
+
+A context may also be written, between `fun` and the name, so that it reads
+in the same order as in a `class` or an `instance`. One constraint may be
+written bare and several in parentheses:
+
+```quail
+fun Eq a => same (x: a) (y: a) : Bool = { eq x y }
+
+fun (Eq a, Ord b) => rank (x: a) (y: b) : Int = { 1 }
+```
+
+A written context is checked against what the body turned out to need, and a
+superclass counts as provided: a body needing `Eq a` is satisfied by a
+declared `Ord a`. A body needing more than was declared is reported:
+
+```quail
+fun Eq a => bad (x: a) (y: a) : Bool = { lt x y }
+```
+
+```
+an error occured while checking the types of the program: the body needs Ord a, which the declared context Eq a does not provide
+```
+
+Only a definition that stands on its own may write a context. Two definitions
+that are mutually recursive are worked out together, so a context on one of
+them would be a claim about both; leave it off and it is inferred.
+
+### What the prelude provides
+
+`Eq`, `Ord` and `Num`, with instances for `Int`, `Bool`, `List a` and
+`Maybe a` where they make sense. The operators are surface syntax for their
+methods:
+
+| Operator | Method | Class |
+| --- | --- | --- |
+| `==` `!=` | `eq` `neq` | `Eq` |
+| `<` `<=` `>` `>=` | `lt` `le` `gt` `ge` | `Ord` |
+| `+` `-` `*` `/` | `add` `sub` `mul` `div` | `Num` |
+
+An operator goes on meaning its method even where something else has taken
+the method's name, so `fun add x y = { x * y }` defines `add` and does not
+redefine `+`.
+
+A written number is `Num a => a`, not `Int`: it stands for whatever type it
+is used at. Where nothing says which, the defaulting rules settle it, and
+`Int` is what they settle on. So `fun double x = { x + x }` is
+`Num a => a -> a`, while `fun two = { 1 + 1 }` is `Int`, because a definition
+that takes no arguments is a value and a value is computed once.
+
+Writing a signature on a numeric function is worth doing when it is only ever
+used at one type: `fun loop (n: Int) (acc: Int) : Int` is compiled against
+the dictionary for `Int`, which is known, and the calls become direct ones.
+Left to inference the same loop is about any number at all and pays for a
+dictionary it is handed.
+
+### Limitations
+
+* A class abstracts over exactly one type variable. There are no
+  multi-parameter classes and no functional dependencies.
+* An instance head is a type constructor applied to distinct type variables,
+  so `instance Eq (List a)` is allowed and `instance Eq (List Int)` is not.
+* No two instances of a class may overlap, and there is no way to say which
+  should win.
+* An instance context is subject to Paterson's conditions, so that working
+  out which instances apply always finishes.
+* Two classes may not declare a method of the same name.
+* A method the class supplies a default for is not specialised as far as one
+  the instance writes: it is still reached through the dictionary.
+* Deriving is not implemented; every instance is written out.
+
 ### Let/In
 
 `let` introduces local definitions visible only inside its `in` block. Each
@@ -323,8 +470,23 @@ This will produce the `qc` compiler binary in your build directory.
 ```bash
 Usage: qc [source_file] [options]
 Options:
-  -o <path>      Specify the output file path
-  --help         Display this information
+  -o <path>       Specify the output file path
+  --dump-ast      Print the structure of the parsed program
+  --dump-source   Print the parsed program back out as source
+  --check-classes Check the classes and instances and print them
+  --dump-types    Print the type inferred for every global
+  --dump-core     Print the program with its dictionaries made explicit
+  --help          Display this information
+```
+
+## Diagnostics
+
+Setting `QUAIL_STATS` in the environment of a compiled program makes it report
+what it allocated and how often it collected, which is what the benchmarks in
+`test/e2e/bench/` are checked against:
+
+```bash
+QUAIL_STATS=1 ./a.out
 ```
 
 ## Acknowledgements

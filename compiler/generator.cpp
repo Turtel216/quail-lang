@@ -1,4 +1,5 @@
 #include "generator.hpp"
+#include <cassert>
 #include <cstdio>
 #include <llvm/IR/DerivedTypes.h>
 #include <llvm/Target/TargetOptions.h>
@@ -36,10 +37,10 @@ void CodeGenerator::createTypes() {
       ->setBody({this->structTypes.at("node_base"), this->nodePtrType,
                  this->nodePtrType});
 
+  /* The code pointer is a pointer: a function type is not something a
+   * struct may hold, nor something a parameter may be declared as. */
   this->structTypes.at("node_global")
-      ->setBody({this->structTypes.at("node_base"),
-                 llvm::FunctionType::get(llvm::Type::getVoidTy(ctx),
-                                         {this->stackPointerType}, false)});
+      ->setBody({this->structTypes.at("node_base"), this->nodePtrType});
   this->structTypes.at("node_ind")
       ->setBody({this->structTypes.at("node_base"), this->nodePtrType});
 
@@ -129,11 +130,11 @@ void CodeGenerator::createFunctions() {
       llvm::Function::LinkageTypes::ExternalLinkage, "alloc_app",
       &this->module);
 
-  /* alloc_global: (gmachine*, function, i32) -> node_base* */
+  /* alloc_global: (gmachine*, code pointer, i32) -> node_base* */
   this->functions["alloc_global"] = llvm::Function::Create(
       llvm::FunctionType::get(
           this->nodePtrType,
-          {this->gmachinePtrType, this->functionType, int32Type}, false),
+          {this->gmachinePtrType, this->nodePtrType, int32Type}, false),
       llvm::Function::LinkageTypes::ExternalLinkage, "alloc_global",
       &this->module);
 
@@ -142,6 +143,12 @@ void CodeGenerator::createFunctions() {
       llvm::FunctionType::get(
           this->nodePtrType, {this->gmachinePtrType, this->nodePtrType}, false),
       llvm::Function::LinkageTypes::ExternalLinkage, "alloc_ind",
+      &this->module);
+
+  this->functions["gmachine_register_caf"] = llvm::Function::Create(
+      llvm::FunctionType::get(
+          voidType, {this->gmachinePtrType, this->nodePtrType}, false),
+      llvm::Function::LinkageTypes::ExternalLinkage, "gmachine_register_caf",
       &this->module);
 
   this->functions["unwind"] = llvm::Function::Create(
@@ -293,6 +300,53 @@ llvm::Function *CodeGenerator::createCustomFunction(std::string name,
   this->customFunctions["f_" + name] = std::move(newCustome);
 
   return newFunction;
+}
+
+void CodeGenerator::markAsCaf(const std::string &name) {
+  auto &custom = getCustomFunction(name);
+  /* A global that takes arguments is not a value until it has them, so
+   * there is nothing about it to share. */
+  assert(custom.arity == 0);
+
+  if (custom.cafSlot)
+    return;
+
+  custom.cafSlot = new llvm::GlobalVariable(
+      this->module, this->nodePtrType, false,
+      llvm::GlobalValue::LinkageTypes::InternalLinkage,
+      llvm::ConstantPointerNull::get(this->nodePtrType), "caf.f_" + name);
+
+  this->cafOrder.push_back("f_" + name);
+}
+
+llvm::Value *CodeGenerator::createCafLoad(llvm::GlobalVariable *slot) {
+  return this->builder.CreateLoad(this->nodePtrType, slot, "caf.value");
+}
+
+/* One node per shared global, allocated and handed to the collector before
+ * anything else runs. Each is registered as soon as it is stored: allocating
+ * the next one may collect, and a slot the collector has not been told about
+ * would be left pointing at where its value used to be. */
+void CodeGenerator::createCafInitializer() {
+  auto function = llvm::Function::Create(
+      this->functionType, llvm::Function::LinkageTypes::ExternalLinkage,
+      "quail_init_cafs", &this->module);
+
+  this->builder.SetInsertPoint(
+      llvm::BasicBlock::Create(this->ctx, "entry", function));
+
+  auto registerCaf = this->functions.at("gmachine_register_caf");
+  for (auto &name : this->cafOrder) {
+    auto &custom = *this->customFunctions.at(name);
+    auto node =
+        createGlobal(function, custom.function, createI32(custom.arity));
+
+    this->builder.CreateStore(node, custom.cafSlot);
+    this->builder.CreateCall(registerCaf,
+                             {function->arg_begin(), custom.cafSlot});
+  }
+
+  this->builder.CreateRetVoid();
 }
 
 void CodeGenerator::createUnwind(llvm::Function *f) {

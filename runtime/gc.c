@@ -8,6 +8,7 @@
 #include "heap.h"
 #include "panic.h"
 #include "stack.h"
+#include "stats.h"
 
 /* Work done per incremental major GC slice, in objects. */
 enum { GC_MARK_SLICE = 256, GC_SWEEP_SLICE = 256 };
@@ -147,6 +148,8 @@ static void gc_adopt_promoted(struct gmachine *g, struct node_vec *promoted) {
 }
 
 void minor_gc(struct gmachine *g) {
+    rt_stats.minor_collections++;
+
     struct node_vec queue;
     node_vec_init(&queue, 0);
 
@@ -154,6 +157,13 @@ void minor_gc(struct gmachine *g) {
     struct node_base **roots = stack_slots(&g->stack);
     for (size_t i = 0; i < stack_count(&g->stack); i++) {
         roots[i] = evacuate(g, roots[i], &queue);
+    }
+
+    /* Additional roots: the slots holding the program's constant values,
+     * which are reachable from nowhere else. */
+    for (size_t i = 0; i < g->caf_roots.count; i++) {
+        struct node_base **slot = g->caf_roots.slots[i];
+        *slot = evacuate(g, *slot, &queue);
     }
 
     /* Additional roots: major-heap objects the mutator pointed back into the
@@ -293,6 +303,13 @@ static void gc_start_cycle(struct gmachine *g) {
     for (size_t i = 0; i < stack_count(&g->stack); i++) {
         if (node_is_white_ptr(roots[i])) {
             gc_grey(&g->gc_state, roots[i]);
+        }
+    }
+
+    for (size_t i = 0; i < g->caf_roots.count; i++) {
+        struct node_base *value = *g->caf_roots.slots[i];
+        if (node_is_white_ptr(value)) {
+            gc_grey(&g->gc_state, value);
         }
     }
 }

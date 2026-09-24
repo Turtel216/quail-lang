@@ -11,6 +11,19 @@ using yyscan_t = void*;
 
 %code {
 #include "parse_driver.hpp"
+
+/* A method written twice says nothing about which body wins, so it is named
+ * where it is written rather than left to whichever of the two survives. */
+#define CHECK_DUPLICATE_METHOD(methods, what)                                  \
+  do {                                                                         \
+    const DefinitionDefn *duplicate = findDuplicateMethod(methods);            \
+    if (duplicate) {                                                           \
+      drv.reportError(duplicate->loc, std::string("the method ") +             \
+                                          duplicate->name +                    \
+                                          " is written twice in this " what);  \
+      YYABORT;                                                                 \
+    }                                                                          \
+  } while (false)
 }
 
 %param { yyscan_t scanner }
@@ -47,6 +60,9 @@ using yyscan_t = void*;
 %token IN
 %token IF
 %token ELSE
+%token CLASS
+%token INSTANCE
+%token FATARROW
 %token LAMBDA
 %token <std::string> LID
 %token <std::string> UID
@@ -73,12 +89,18 @@ using yyscan_t = void*;
 %type <std::unique_ptr<Ast>> expr comparison aAdd aMul composition case conditional lambda let list app appBase
 %type <binop> comparisonOp
 %type <std::unique_ptr<DefinitionData>> data
-%type <std::unique_ptr<DefinitionDefn>> defn
+%type <std::unique_ptr<DefinitionClass>> class
+%type <std::unique_ptr<DefinitionInstance>> instance
+%type <std::unique_ptr<DefinitionDefn>> defn classMethod
+%type <std::vector<std::unique_ptr<DefinitionDefn>>> classMethods instanceMethods
+%type <ff::sem::ParsedContext> context predicates
+%type <std::unique_ptr<ff::sem::ParsedPred>> predicate
+%type <std::vector<std::unique_ptr<ff::sem::ParsedType>>> predicateArgs
 %type <std::unique_ptr<DefinitionGroup>> letDefinitions
 %type <std::unique_ptr<Branch>> branch
 %type <std::unique_ptr<Pattern>> pattern
 %type <std::unique_ptr<Constructor>> constructor
-%type <std::vector<std::unique_ptr<ff::sem::ParsedType>>> typeList
+%type <std::vector<std::unique_ptr<ff::sem::ParsedType>>> typeList appliedTypeArgs
 %type <std::unique_ptr<ff::sem::ParsedType>> type nonArrowType typeListElement
 
 %start program
@@ -97,6 +119,90 @@ definitions
 definition
     : defn { auto name = $1->name; drv.getGlobalDefs().defsDefn[name] = std::move($1); }
     | data { auto name = $1->name; drv.getGlobalDefs().defsData[name] = std::move($1); }
+    | class { auto name = $1->getName(); drv.getGlobalDefs().defsClass[name] = std::move($1); }
+    | instance { drv.getGlobalDefs().defsInstance.push_back(std::move($1)); }
+    ;
+
+/* A constraint, and the list of them a definition may be written under. The
+ * arguments are collected without insisting there be exactly one, so that a
+ * head with the wrong number of them is reported as such rather than failing
+ * to parse. */
+predicate
+    : UID predicateArgs
+        { $$ = std::unique_ptr<ff::sem::ParsedPred>(
+            new ff::sem::ParsedPred(std::move($1), std::move($2), @$)); }
+    ;
+
+predicateArgs
+    : typeListElement
+        { $$ = std::vector<std::unique_ptr<ff::sem::ParsedType>>();
+          $$.push_back(std::move($1)); }
+    | predicateArgs typeListElement
+        { $$ = std::move($1); $$.push_back(std::move($2)); }
+    ;
+
+predicates
+    : predicate { $$ = ff::sem::ParsedContext(); $$.push_back(std::move($1)); }
+    | predicates COMMA predicate { $$ = std::move($1); $$.push_back(std::move($3)); }
+    ;
+
+/* One constraint may be written bare; several are written in parentheses.
+ * Both come out as the same list. */
+context
+    : predicate { $$ = ff::sem::ParsedContext(); $$.push_back(std::move($1)); }
+    | OPAREN predicates CPAREN { $$ = std::move($2); }
+    | OPAREN CPAREN
+        { drv.reportError(@$, "an empty context has nothing to say, leave the => off");
+          YYABORT; }
+    ;
+
+/* The head is written the way a constraint is, so that a class over the
+ * wrong number of variables parses and is reported by the class environment
+ * rather than coming back as a syntax error about whatever followed. */
+class
+    : CLASS predicate EQUAL OCURLY classMethods CCURLY
+        { $$ = std::unique_ptr<DefinitionClass>(new DefinitionClass(
+            ff::sem::ParsedContext(), std::move($2), std::move($5), @$));
+          CHECK_DUPLICATE_METHOD($$->methods, "class"); }
+    | CLASS context FATARROW predicate EQUAL OCURLY classMethods CCURLY
+        { $$ = std::unique_ptr<DefinitionClass>(new DefinitionClass(
+            std::move($2), std::move($4), std::move($7), @$));
+          CHECK_DUPLICATE_METHOD($$->methods, "class"); }
+    ;
+
+/* A method either declares its signature and leaves every instance to
+ * implement it, or declares it and supplies the body to fall back on. */
+classMethods
+    : %empty { $$ = std::vector<std::unique_ptr<DefinitionDefn>>(); }
+    | classMethods classMethod { $$ = std::move($1); $$.push_back(std::move($2)); }
+    ;
+
+classMethod
+    : DEFN LID defnParams returnAnnotation
+        { $$ = std::unique_ptr<DefinitionDefn>(
+            new DefinitionDefn(std::move($2), std::move($3), nullptr, @$));
+          $$->returnAnnotation = std::move($4);
+          $$->returnAnnotationLoc = @4; }
+    | DEFN context FATARROW LID defnParams returnAnnotation
+        { drv.reportError(@$, "the method " + $4 + " writes a context of its own; a method is already constrained by the class it belongs to");
+          YYABORT; }
+    | defn { $$ = std::move($1); }
+    ;
+
+instance
+    : INSTANCE predicate EQUAL OCURLY instanceMethods CCURLY
+        { $$ = std::unique_ptr<DefinitionInstance>(new DefinitionInstance(
+            ff::sem::ParsedContext(), std::move($2), std::move($5), @$));
+          CHECK_DUPLICATE_METHOD($$->methods, "instance"); }
+    | INSTANCE context FATARROW predicate EQUAL OCURLY instanceMethods CCURLY
+        { $$ = std::unique_ptr<DefinitionInstance>(new DefinitionInstance(
+            std::move($2), std::move($4), std::move($7), @$));
+          CHECK_DUPLICATE_METHOD($$->methods, "instance"); }
+    ;
+
+instanceMethods
+    : %empty { $$ = std::vector<std::unique_ptr<DefinitionDefn>>(); }
+    | instanceMethods defn { $$ = std::move($1); $$.push_back(std::move($2)); }
     ;
 
 defn
@@ -105,6 +211,12 @@ defn
             new DefinitionDefn(std::move($2), std::move($3), std::move($7), @$));
           $$->returnAnnotation = std::move($4);
           $$->returnAnnotationLoc = @4; }
+    | DEFN context FATARROW LID defnParams returnAnnotation EQUAL OCURLY expr CCURLY
+        { $$ = std::unique_ptr<DefinitionDefn>(
+            new DefinitionDefn(std::move($4), std::move($5), std::move($9), @$));
+          $$->context = std::move($2);
+          $$->returnAnnotation = std::move($6);
+          $$->returnAnnotationLoc = @6; }
     ;
 
 /* Parameters of a definition. A bare name is left to be inferred; one in
@@ -300,7 +412,17 @@ type
 nonArrowType
     : UID typeList { $$ = std::unique_ptr<ff::sem::ParsedType>(new ff::sem::ParsedTypeApp(std::move($1), std::move($2))); }
     | LID { $$ = std::unique_ptr<ff::sem::ParsedType>(new ff::sem::ParsedTypeVar(std::move($1))); }
+    | LID appliedTypeArgs
+        { drv.reportError(@$, "the type variable " + $1 + " cannot be applied to arguments, only a named type can");
+          YYABORT; }
     | OPAREN type CPAREN { $$ = std::move($2); }
+    ;
+
+/* Only ever matched by the rule above, which is there to name a head like
+ * (f a) rather than let it come back as a syntax error about the argument. */
+appliedTypeArgs
+    : typeListElement { $$ = std::vector<std::unique_ptr<ff::sem::ParsedType>>(); $$.push_back(std::move($1)); }
+    | appliedTypeArgs typeListElement { $$ = std::move($1); $$.push_back(std::move($2)); }
     ;
 
 typeListElement

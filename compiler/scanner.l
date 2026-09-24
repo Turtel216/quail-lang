@@ -36,6 +36,8 @@ let { return yy::parser::make_LET(LOC); }
 in { return yy::parser::make_IN(LOC); }
 if { return yy::parser::make_IF(LOC); }
 else { return yy::parser::make_ELSE(LOC); }
+class { return yy::parser::make_CLASS(LOC); }
+instance { return yy::parser::make_INSTANCE(LOC); }
 \\ { return yy::parser::make_LAMBDA(LOC); }
 \{ { return yy::parser::make_OCURLY(LOC); }
 \} { return yy::parser::make_CCURLY(LOC); }
@@ -46,6 +48,7 @@ else { return yy::parser::make_ELSE(LOC); }
 ,  { return yy::parser::make_COMMA(LOC); }
 : { return yy::parser::make_COLON(LOC); }
 -> { return yy::parser::make_ARROW(LOC); }
+=> { return yy::parser::make_FATARROW(LOC); }
 \|> { return yy::parser::make_PIPE(LOC); }
 \. { return yy::parser::make_COMPOSE(LOC); }
 == { return yy::parser::make_EQUALEQUAL(LOC); }

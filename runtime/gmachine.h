@@ -21,9 +21,27 @@
  * field 0 (see CodeGenerator::unwrapGmachineStackPtr).
  * ========================================================================= */
 
+/* -- Static roots ----------------------------------------------------------
+ *
+ * A constant applicative form: a value with no parameters, allocated once and
+ * updated in place the first time it is forced, so that every reference to it
+ * shares the one result.  The compiler emits one slot per such value and
+ * registers it here before the program starts.
+ *
+ * The slots are roots for both collectors.  They are the only roots outside
+ * the stack, which is why they have to be registered rather than found.
+ */
+struct caf_roots {
+    struct node_base ***slots;
+    size_t count;
+    size_t capacity;
+};
+
 struct gmachine {
     struct stack stack;
     struct minor_heap minor_heap;
+
+    struct caf_roots caf_roots;
 
     /* Major-heap objects mutated to point into the minor heap.  Extra roots
      * for the next minor GC; cleared by it. */
@@ -40,6 +58,12 @@ struct gmachine {
 
 void gmachine_init(struct gmachine *g);
 void gmachine_free(struct gmachine *g);
+
+/* Record `slot` as a root.  Must be called as soon as the slot is filled and
+ * before anything else is allocated, since allocating may collect and a slot
+ * the collector has not been told about would be left pointing at where its
+ * value used to be. */
+void gmachine_register_caf(struct gmachine *g, struct node_base **slot);
 
 /* -- G-machine instructions ------------------------------------------------
  * Called by generated code; see the Instruction subclasses in the compiler. */

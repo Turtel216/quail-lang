@@ -9,6 +9,7 @@
 #include "generator.hpp"
 #include "graph_function.hpp"
 #include "instructions.hpp"
+#include <functional>
 #include <llvm/IR/Function.h>
 #include <location.hh>
 #include <map>
@@ -18,6 +19,7 @@
 #include <vector>
 
 class GlobalScope;
+class AstLid;
 
 class Ast {
 public:
@@ -49,7 +51,23 @@ public:
   generate(const std::shared_ptr<ff::ir::Enviroment> &env,
            std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const = 0;
 
+  /* Visit every reference to a name in this subtree. What a reference is
+   * applied to is settled once the whole program is elaborated, which is
+   * after the tree has stopped changing shape, so the optimizer revisits
+   * them rather than rewriting as it goes. */
+  virtual void forEachNode(const std::function<void(Ast &)> &visit) = 0;
+
+  /* Collect the dictionaries this subtree reaches for but was not handed.
+   * Runs after elaboration and mirrors findFree: each construct that takes
+   * dictionaries of its own removes them before passing the set on. */
+  virtual void findEvidence(std::set<std::string> &into) = 0;
+
   virtual void print(int indent, std::ostream &to) const = 0;
+
+  /* Write this subtree back out as the source that would parse to it again.
+   * Everything compound is parenthesized, so printing twice is printing
+   * once: the parentheses leave no trace in the tree they came from. */
+  virtual void printSource(std::ostream &to) const = 0;
 };
 
 class Pattern {
@@ -61,6 +79,7 @@ public:
   virtual ~Pattern() = default;
 
   virtual void print(std::ostream &to) const = 0;
+  virtual void printSource(std::ostream &to) const = 0;
   virtual void
   insertBindings(ff::sem::TypeManager &mgr,
                  std::shared_ptr<ff::sem::TypeContext> &typeCtx) const = 0;
@@ -103,34 +122,19 @@ public:
       : name(std::move(_name)), types(std::move(_types)) {}
 };
 
-class AstInt : public Ast {
-public:
-  int value;
-
-  explicit AstInt(int v, yy::location lc = yy::location())
-      : Ast(std::move(lc)), value(v) {}
-
-  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
-
-  void findFree(ff::sem::TypeManager &mgr,
-                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
-                std::set<std::string> &into) override;
-
-  void translate(GlobalScope &scope) override;
-
-  void generate(
-      const std::shared_ptr<ff::ir::Enviroment> &env,
-      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
-
-  void print(int indent, std::ostream &to) const override;
-};
-
 class AstLid : public Ast {
 public:
   std::string id;
   /* Set on the references left behind by lambda lifting, whose id is already
    * the symbol of a global rather than a name the surrounding scope binds. */
   bool lifted;
+  /* How to describe this use when a constraint it took on cannot be
+   * answered. Empty for an ordinary name, whose own spelling says it. */
+  std::string provenance;
+  /* One slot per constraint the name holds under, in the order the name
+   * takes its dictionaries in. Filled in when the binding group around this
+   * use is solved, and applied to the name at code generation. */
+  std::vector<std::shared_ptr<ff::sem::EvidenceSlot>> evidence;
 
   explicit AstLid(std::string i, yy::location lc = yy::location())
       : Ast(std::move(lc)), id(std::move(i)), lifted(false) {}
@@ -147,8 +151,50 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
+
+class AstInt : public Ast {
+public:
+  int value;
+  /* A written number stands for whatever type it is used at, so it means the
+   * class method that turns one into that type, applied to the number. This
+   * is the reference to that method, and it carries the constraint. */
+  std::unique_ptr<AstLid> fromInt;
+  /* Set when the type it stands for turned out to be the machine number, in
+   * which case there is nothing to convert. */
+  bool primitive = false;
+
+  explicit AstInt(int v, yy::location lc = yy::location())
+      : Ast(std::move(lc)), value(v) {}
+
+  std::shared_ptr<ff::sem::Type> typecheck(ff::sem::TypeManager &mgr) override;
+
+  void findFree(ff::sem::TypeManager &mgr,
+                std::shared_ptr<ff::sem::TypeContext> &typeCtx,
+                std::set<std::string> &into) override;
+
+  void translate(GlobalScope &scope) override;
+
+  void generate(
+      const std::shared_ptr<ff::ir::Enviroment> &env,
+      std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
+  void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
+};
+
 
 class AstUid : public Ast {
 public:
@@ -168,7 +214,13 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 /* A list literal. It stands for the same chain of Cons applications ending
@@ -193,7 +245,13 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstBinop : public Ast {
@@ -201,6 +259,10 @@ public:
   binop op;
   std::unique_ptr<Ast> left;
   std::unique_ptr<Ast> right;
+  /* An operator is surface syntax for a method, so this is the reference to
+   * it, carrying whatever constraint the method carries. The node stays one
+   * of its own so that a mistake in an operand can be named as such. */
+  std::unique_ptr<AstLid> function;
 
   AstBinop(binop _op, std::unique_ptr<Ast> lhs, std::unique_ptr<Ast> rhs,
            yy::location lc = yy::location())
@@ -219,7 +281,13 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstApp : public Ast {
@@ -242,7 +310,13 @@ public:
   void generate(
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 /* `value |> function` hands the value on the left to the function on the
@@ -270,7 +344,13 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 /* `f . g` is the function that hands its argument to g and its answer to f.
@@ -297,7 +377,13 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstCase : public Ast {
@@ -324,7 +410,13 @@ public:
 
   void translate(GlobalScope &scope) override;
 
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 /* `if cond { ... } else { ... }`. It is a case analysis of the two Bool
@@ -357,7 +449,13 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class PatternVar : public Pattern {
@@ -377,6 +475,8 @@ public:
                  std::shared_ptr<ff::sem::TypeContext> &typeCtx) const override;
 
   void print(std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class PatternConstr : public Pattern {
@@ -398,18 +498,40 @@ public:
                  std::shared_ptr<ff::sem::TypeContext> &typeCtx) const override;
 
   void print(std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class DefinitionDefn {
 public: // TODO: Fix encapsulation
   std::string name;
   std::vector<std::unique_ptr<Param>> params;
+  /* Null only for a class method that declares its signature and leaves the
+   * implementation to each instance. Such a definition lives in the class it
+   * was written in and never reaches inference or code generation. */
   std::unique_ptr<Ast> body;
+
+  /* The constraints the definition wrote to the left of its =>. Empty when
+   * it wrote none, which is every definition that predates type classes. */
+  ff::sem::ParsedContext context;
+  /* The same constraints once resolved, in terms of the same variables the
+   * rest of the signature was resolved against. */
+  std::vector<ff::sem::Pred> declaredContext;
 
   /* The declared return type, if the program wrote one, and where it wrote
    * it so a bad type can be pointed at rather than described. */
   std::unique_ptr<ff::sem::ParsedType> returnAnnotation;
   yy::location returnAnnotationLoc;
+  /* How to put it when the body does not have the type the definition was
+   * fixed to, for the cases where something other than the body fixed it.
+   * Empty when nothing did, and the mismatch is an ordinary one. */
+  std::string returnDescription;
+
+  /* One parameter per constraint the definition holds under, in the
+   * canonical order. Prepended to params once the group is generalized, so
+   * that everything downstream sees an ordinary function of a larger
+   * arity. */
+  std::vector<std::string> dictionaryParams;
 
   /* A local definition is reachable only through a stack slot, so anything
    * nested inside it that mentions one must take it as an extra parameter. */
@@ -448,6 +570,16 @@ public: // TODO: Fix encapsulation
   void compile();
   void declareLLVM(ff::cg::CodeGenerator &generator);
   void generateLLVM(ff::cg::CodeGenerator &generator);
+
+  /* Gather what the body reaches for and the definition was not handed, so
+   * that lambda lifting knows to capture it. */
+  void findEvidence(std::set<std::string> &into);
+  void forEachNode(const std::function<void(Ast &)> &visit);
+
+  void print(int indent, std::ostream &to) const;
+  /* `keyword` is what introduces the definition in the source. A class method
+   * without a body stops after its signature. */
+  void printSource(std::ostream &to, int indent) const;
 };
 
 /* Emit the supercombinator behind a data constructor: pack its arguments
@@ -476,7 +608,131 @@ public:
   void insertTypes(std::shared_ptr<ff::sem::TypeContext> &typeCtx);
   void insertConstructors() const;
   void generateLLVM(ff::cg::CodeGenerator &generator);
+
+  void print(int indent, std::ostream &to) const;
+  void printSource(std::ostream &to) const;
 };
+
+/* A class declaration: the head it abstracts over, the classes every
+ * instance of it must already be an instance of, and its methods.
+ *
+ * The head is kept as written, a class name applied to arguments, so that a
+ * class over something other than one type variable is reported by the class
+ * environment rather than failing to parse.
+ *
+ * Methods are held in a vector rather than a map because their order is the
+ * order the class body wrote them in, and that order becomes the field order
+ * of the dictionary. A method with a body is a default implementation, used
+ * by an instance that does not provide its own. */
+class DefinitionClass {
+public:
+  ff::sem::ParsedContext supers;
+  std::unique_ptr<ff::sem::ParsedPred> head;
+  std::vector<std::unique_ptr<DefinitionDefn>> methods;
+
+  yy::location loc;
+
+  DefinitionClass(ff::sem::ParsedContext ss,
+                  std::unique_ptr<ff::sem::ParsedPred> h,
+                  std::vector<std::unique_ptr<DefinitionDefn>> ms,
+                  yy::location lc = yy::location())
+      : supers(std::move(ss)), head(std::move(h)), methods(std::move(ms)),
+        loc(std::move(lc)) {}
+
+  inline const std::string &getName() const noexcept {
+    return this->head->className;
+  }
+
+  /* One field per superclass, then one per method: the shape of the
+   * dictionary every instance of this class builds. */
+  inline std::size_t dictionaryArity() const noexcept {
+    return this->supers.size() + this->methods.size();
+  }
+
+  /* Emit the dictionary constructor and the selector that reaches each of
+   * its fields. Neither refers to anything else the compiler generates, so
+   * both are declared and filled in together. */
+  void generateLLVM(ff::cg::CodeGenerator &generator);
+
+  void print(int indent, std::ostream &to) const;
+  void printSource(std::ostream &to) const;
+};
+
+/* One field of the dictionary an instance builds. Exactly one of these says
+ * what goes in it. */
+class DictionaryField {
+public:
+  /* A superclass: evidence for what this instance's head is, at that class. */
+  std::shared_ptr<ff::sem::EvidenceTerm> evidence;
+  /* A method the instance implements, once lifted into a global of its own. */
+  DefinitionDefn *method = nullptr;
+  /* A method it does not, standing for the class's default applied to the
+   * dictionary being built. */
+  std::string defaultSymbol;
+};
+
+/* An instance declaration: what it claims, what it needs in order to claim
+ * it, and the methods it provides. The head is kept as the program wrote it,
+ * a class name applied to arguments, so that a head with the wrong number of
+ * them can be reported as such instead of failing to parse. */
+class DefinitionInstance {
+public:
+  ff::sem::ParsedContext context;
+  std::unique_ptr<ff::sem::ParsedPred> head;
+  std::vector<std::unique_ptr<DefinitionDefn>> methods;
+  /* One parameter per constraint the instance holds under, in the canonical
+   * order. The dictionary this instance builds is a function of them, and
+   * its method bodies reach for them. */
+  std::vector<std::string> dictionaryParams;
+  /* What goes in each field of the dictionary, in the order the class lays
+   * them out. */
+  std::vector<DictionaryField> dictionaryFields;
+  /* The symbol of the function that builds it. */
+  std::string mangledName;
+
+  std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+  llvm::Function *generatedFunction = nullptr;
+
+  yy::location loc;
+
+  DefinitionInstance(ff::sem::ParsedContext c,
+                     std::unique_ptr<ff::sem::ParsedPred> h,
+                     std::vector<std::unique_ptr<DefinitionDefn>> ms,
+                     yy::location lc = yy::location())
+      : context(std::move(c)), head(std::move(h)), methods(std::move(ms)),
+        loc(std::move(lc)) {}
+
+  void compile();
+  void declareLLVM(ff::cg::CodeGenerator &generator);
+  void generateLLVM(ff::cg::CodeGenerator &generator);
+
+  void print(int indent, std::ostream &to) const;
+  void printSource(std::ostream &to) const;
+};
+
+/* A dictionary that depends on nothing, given a name of its own so that the
+ * whole program shares one. The optimizer makes these out of the dictionary
+ * constructions it finds being rebuilt where they need not be. */
+class DictionaryConstant {
+public:
+  std::string mangledName;
+  std::shared_ptr<ff::sem::EvidenceTerm> term;
+
+  std::vector<std::unique_ptr<ff::ir::Instruction>> instructions;
+  llvm::Function *generatedFunction = nullptr;
+
+  DictionaryConstant(std::string n, std::shared_ptr<ff::sem::EvidenceTerm> t)
+      : mangledName(std::move(n)), term(std::move(t)) {}
+
+  void compile();
+  void declareLLVM(ff::cg::CodeGenerator &generator);
+  void generateLLVM(ff::cg::CodeGenerator &generator);
+};
+
+/* The second of two methods written under the same name, or null when every
+ * method in the list is written once. */
+const DefinitionDefn *findDuplicateMethod(
+    const std::vector<std::unique_ptr<DefinitionDefn>> &methods);
 
 /* Definitions that share a scope and may refer to one another: the whole
  * program at the top level, or the bindings of a single let. */
@@ -484,16 +740,31 @@ class DefinitionGroup {
 public:
   std::map<std::string, std::unique_ptr<DefinitionData>> defsData;
   std::map<std::string, std::unique_ptr<DefinitionDefn>> defsDefn;
+  /* Classes and instances are top level only; a let binds values, not the
+   * meaning of a name for every type at once. Instances are kept in source
+   * order because, unlike a class, an instance has no name to key it by. */
+  std::map<std::string, std::unique_ptr<DefinitionClass>> defsClass;
+  std::vector<std::unique_ptr<DefinitionInstance>> defsInstance;
 
   std::shared_ptr<ff::sem::TypeContext> typeContext;
   /* Mutually recursive members, in dependency order. */
   std::vector<std::unique_ptr<ff::sem::Group>> groups;
 
+  void insertDataTypes(std::shared_ptr<ff::sem::TypeContext> &typeCtx);
   void findFree(ff::sem::TypeManager &mgr,
                 std::shared_ptr<ff::sem::TypeContext> &typeCtx,
                 ff::sem::Visibility visibility, std::set<std::string> &into);
   void typecheck(ff::sem::TypeManager &mgr);
+  void findEvidence(std::set<std::string> &into);
+  /* Solve what one binding group wanted, then quantify its members over
+   * whatever is left. `mark` is where the wanted set stood before the group
+   * was checked. */
+  void generalizeGroup(ff::sem::TypeManager &mgr, const ff::sem::Group &group,
+                       std::size_t mark);
   void translate(GlobalScope &scope);
+
+  void print(int indent, std::ostream &to) const;
+  void printSource(std::ostream &to) const;
 };
 
 /* Registry of the functions produced by lambda lifting. Entries are
@@ -548,7 +819,13 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
 
 class AstLet : public Ast {
@@ -581,5 +858,11 @@ public:
       const std::shared_ptr<ff::ir::Enviroment> &env,
       std::vector<std::unique_ptr<ff::ir::Instruction>> &into) const override;
 
+  void forEachNode(const std::function<void(Ast &)> &visit) override;
+
+  void findEvidence(std::set<std::string> &into) override;
+
   void print(int indent, std::ostream &to) const override;
+
+  void printSource(std::ostream &to) const override;
 };
